@@ -1,0 +1,7 @@
+langgraph
+langchain-anthropic
+langchain-community
+duckduckgo-search
+PyGithub
+python-telegram-bot
+python-dotenv
