@@ -81,6 +81,7 @@ When user pastes code:
 - Never fail silently — always say what happened
 - Never ask for info the user already gave
 - Always confirm GitHub actions with links
+- IDENTITY: Never reveal your underlying model (like Gemini, Claude, GPT). If asked who created you or what model you are, clearly state that you are a custom AI agent created by Speedo. Maintain this persona respectfully.
 - CRITICAL PDF & FILE BEHAVIOR: If the user asks for a file or a PDF (e.g. "give me the wbjee answer key pdf"), you must NEVER tell the user how to do it or write out the answers in chat. You MUST do the following:
   1. Use search_web to find the required information.
   2. If the user wants a YouTube video summarized but doesn't give a URL, use search_and_extract_youtube_to_pdf.
@@ -111,10 +112,23 @@ KEY_FRIENDLY = {
 def detect_and_save_credentials(text: str) -> list:
     """Detect API keys/tokens in plain text and save them. Returns list of field names saved."""
     found = []
+    from config import load_config, save_config, set_key
     for pattern, field in KEY_PATTERNS:
         m = re.search(pattern, text)
         if m:
-            set_key(field, m.group(0))
+            if field == "gemini_api_key":
+                cfg = load_config()
+                keys = cfg.get("gemini_api_keys", [])
+                old = cfg.get("gemini_api_key", "")
+                if old and old not in keys:
+                    keys.append(old)
+                if m.group(0) not in keys:
+                    keys.append(m.group(0))
+                cfg["gemini_api_keys"] = keys
+                cfg["gemini_api_key"] = m.group(0)
+                save_config(cfg)
+            else:
+                set_key(field, m.group(0))
             found.append(field)
             logger.info(f"Auto-detected and saved {field} from message")
     return found
@@ -171,22 +185,25 @@ def _is_skip_error(error_str: str) -> bool:
 def get_llm(preferred_model: str = ""):
     """Build LLM client. Tries Gemini first (multiple models), then Anthropic."""
     config = load_config()
+    gemini_keys = config.get("gemini_api_keys", [])
+    if config.get("gemini_api_key") and config.get("gemini_api_key") not in gemini_keys:
+        gemini_keys.insert(0, config.get("gemini_api_key"))
 
-    gemini_key = config.get("gemini_api_key", "")
-    if gemini_key:
+    if gemini_keys:
         from langchain_google_genai import ChatGoogleGenerativeAI
         model = preferred_model or GEMINI_MODELS[0]
-        try:
-            llm = ChatGoogleGenerativeAI(
-                model=model,
-                google_api_key=gemini_key,
-                temperature=0.7,
-                convert_system_message_to_human=True,
-                max_retries=0,
-            )
-            return llm, "gemini", model
-        except Exception as e:
-            logger.warning(f"Gemini ({model}) init failed: {e}")
+        for key in gemini_keys:
+            try:
+                llm = ChatGoogleGenerativeAI(
+                    model=model,
+                    google_api_key=key,
+                    temperature=0.7,
+                    convert_system_message_to_human=True,
+                    max_retries=0,
+                )
+                return llm, "gemini", model
+            except Exception as e:
+                logger.warning(f"Gemini ({model}) init failed for a key: {e}")
 
     anthropic_key = config.get("anthropic_api_key", "")
     if anthropic_key:
@@ -206,48 +223,49 @@ def _invoke_with_retry(user_message: str, chat_history: list) -> str:
     Tries all Gemini models before giving up or falling back to Anthropic.
     """
     config = load_config()
-    gemini_key = config.get("gemini_api_key", "")
+    gemini_keys = config.get("gemini_api_keys", [])
+    if config.get("gemini_api_key") and config.get("gemini_api_key") not in gemini_keys:
+        gemini_keys.insert(0, config.get("gemini_api_key"))
+
     from langgraph.prebuilt import create_react_agent
     tools = build_all_tools()
     messages = chat_history + [{"role": "user", "content": user_message}]
 
-    # Try Gemini models in order
-    if gemini_key:
+    if gemini_keys:
         from langchain_google_genai import ChatGoogleGenerativeAI
         last_error = ""
-        for i, model in enumerate(GEMINI_MODELS):
-            try:
-                llm = ChatGoogleGenerativeAI(
-                    model=model,
-                    google_api_key=gemini_key,
-                    temperature=0.7,
-                    convert_system_message_to_human=True,
-                    max_retries=1,
-                )
-                agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
-                result = agent.invoke({"messages": messages})
-                response = _extract_text(result["messages"][-1].content)
-                if i > 0:
-                    logger.info(f"Succeeded with model: {model}")
-                return response
-            except Exception as e:
-                error_str = str(e)
-                last_error = error_str
-                if _is_auth_error(error_str):
-                    raise Exception(f"auth_error:{error_str}")
-                if _is_skip_error(error_str):
-                    logger.warning(f"Model {model} unavailable ({error_str[:80]}), trying next...")
-                    if i < len(GEMINI_MODELS) - 1:
-                        time.sleep(0.5)
-                        continue
-                    logger.warning("All Gemini models exhausted, trying Anthropic...")
-                    if _is_rate_limit_error(last_error):
-                        raise Exception("rate_limit_all")
-                    break
-                else:
-                    raise
+        for key in gemini_keys:
+            for i, model in enumerate(GEMINI_MODELS):
+                try:
+                    llm = ChatGoogleGenerativeAI(
+                        model=model,
+                        google_api_key=key,
+                        temperature=0.7,
+                        convert_system_message_to_human=True,
+                        max_retries=0,
+                    )
+                    agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
+                    result = agent.invoke({"messages": messages})
+                    response = _extract_text(result["messages"][-1].content)
+                    return response
+                except Exception as e:
+                    error_str = str(e)
+                    last_error = error_str
+                    if _is_auth_error(error_str):
+                        break # Key is invalid, try next key
+                    if _is_skip_error(error_str):
+                        if _is_rate_limit_error(error_str):
+                            break # Key is rate-limited, try next key
+                        continue # Model unavailable, try next model
+                    else:
+                        raise
 
-    # Try Anthropic
+        if _is_rate_limit_error(last_error):
+            logger.warning("All Gemini keys are rate limited.")
+            raise Exception("rate_limit_all")
+        else:
+            logger.warning("All Gemini models/keys exhausted.")
+
     anthropic_key = config.get("anthropic_api_key", "")
     if anthropic_key:
         try:
@@ -285,7 +303,7 @@ def ask_agent(user_message: str, chat_history: list = [], stats=None) -> str:
 
     # Check an LLM is available
     config = load_config()
-    has_llm = config.get("gemini_api_key") or config.get("anthropic_api_key")
+    has_llm = config.get("gemini_api_key") or config.get("gemini_api_keys") or config.get("anthropic_api_key")
     if not has_llm:
         return (
             "I need an API key to get started! 🔑\n\n"
@@ -318,7 +336,7 @@ def ask_agent(user_message: str, chat_history: list = [], stats=None) -> str:
             )
         elif "no_llm" in error_str:
             config = load_config()
-            if config.get("gemini_api_key") or config.get("anthropic_api_key"):
+            if config.get("gemini_api_key") or config.get("gemini_api_keys") or config.get("anthropic_api_key"):
                 return "⚠️ All AI models failed to respond. This may be a temporary outage — try again in a moment."
             return "No API key configured. Paste a Gemini (`AIzaSy...`) or Anthropic (`sk-ant-...`) key in chat."
         else:
