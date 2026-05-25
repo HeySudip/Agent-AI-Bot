@@ -122,11 +122,10 @@ def detect_and_save_credentials(text: str) -> list:
 
 # Gemini models — actual names verified against Google AI Studio API
 GEMINI_MODELS = [
-    
     "gemini-2.0-flash",
     "gemini-2.0-flash-lite",
-    
-    
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
 ]
 
 
@@ -242,6 +241,8 @@ def _invoke_with_retry(user_message: str, chat_history: list) -> str:
                         time.sleep(0.5)
                         continue
                     logger.warning("All Gemini models exhausted, trying Anthropic...")
+                    if _is_rate_limit_error(last_error):
+                        raise Exception("rate_limit_all")
                     break
                 else:
                     raise
