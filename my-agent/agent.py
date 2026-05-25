@@ -420,8 +420,6 @@ def ask_agent(user_message: str, chat_history: list = [], stats=None) -> str:
             "2. Click 'Create API key'\n"
             "3. Paste it here (starts with `AIzaSy...`)\n\n"
             "Or paste an Anthropic key (`sk-ant-...`).\n"
-            "Or paste a FREE Groq key (`gsk_...`) from console.groq.com.\n"
-            "Or paste a FREE OpenRouter key (`sk-or-v1-...`) from openrouter.ai/keys." 
         )
 
     try:
@@ -442,9 +440,9 @@ def ask_agent(user_message: str, chat_history: list = [], stats=None) -> str:
                 "❌ Your API key was rejected. It may be invalid or expired.\n\n"
                 "Paste a fresh key here:\n"
                 "• Gemini: aistudio.google.com/app/apikey → starts with `AIzaSy...`\n"
-                "• Anthropic: console.anthropic.com → starts with `sk-ant-...`
-                • Groq: console.groq.com → starts with `gsk_...`
-                • OpenRouter: openrouter.ai/keys → starts with `sk-or-v1-...`"
+                "• Anthropic: console.anthropic.com → starts with `sk-ant-...`\n"
+                "• Groq: console.groq.com → starts with `gsk_...`\n"
+                "• OpenRouter: openrouter.ai/keys → starts with `sk-or-v1-...`"
             )
         elif "no_llm" in error_str:
             config = load_config()
