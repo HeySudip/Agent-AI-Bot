@@ -1,3 +1,4 @@
+import os
 import re
 import io
 import asyncio
@@ -17,7 +18,6 @@ URL_PATTERN = re.compile(
     r'https?://[^\s<>"{}|\\^`\[\]]+'
 )
 
-
 async def _keep_typing(bot, chat_id: int, stop_event: asyncio.Event):
     """Keep sending typing action every 4 seconds until stop_event is set."""
     while not stop_event.is_set():
@@ -30,28 +30,20 @@ async def _keep_typing(bot, chat_id: int, stop_event: asyncio.Event):
         except asyncio.TimeoutError:
             pass
 
-
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     user_message = update.message.text
 
-    # Access control
     if not is_allowed(user_id):
-        await update.message.reply_text(
-            "⛔ You don't have access to this bot. Contact the admin."
-        )
+        await update.message.reply_text("⛔ You don't have access to this bot. Contact the admin.")
         return
 
-    # Rate limiting
     allowed, wait_time, reason = global_rate_limiter.is_allowed(user_id)
     if not allowed:
-        await update.message.reply_text(
-            f"⏳ {reason}\nPlease wait before sending another message."
-        )
+        await update.message.reply_text(f"⏳ {reason}\nPlease wait before sending another message.")
         return
 
-    # Update user stats
     stats = UserStats(user_id)
     stats.upsert(
         username=user.username or "",
@@ -60,11 +52,9 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     stats.log_action("message", user_message[:100])
 
-    # Get/init conversation store
     store = ConversationStore(user_id)
     history = store.get_history()
 
-    # Start typing indicator in background
     stop_event = asyncio.Event()
     typing_task = asyncio.create_task(
         _keep_typing(context.bot, update.effective_chat.id, stop_event)
@@ -75,7 +65,6 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             None, ask_agent, user_message, history, stats
         )
 
-        # Update stat counters based on content clues
         lower = user_message.lower()
         if any(w in lower for w in ["search", "news", "latest", "find", "look up", "google"]):
             stats.increment("web_searches")
@@ -84,20 +73,30 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         if any(w in lower for w in ["github", "repo", "branch", "commit", "push", "pull request", "issue", "fork", "gist"]):
             stats.increment("github_actions")
 
-        # Save to history
+        # Check for file path
+        file_path_match = re.search(r"__FILE_PATH__=([\w\./-]+)", reply)
+        filepath = None
+        if file_path_match:
+            filepath = file_path_match.group(1)
+            reply = reply.replace(file_path_match.group(0), "").strip()
+
         store.add_message("user", user_message)
         store.add_message("assistant", reply)
 
-        # Format and send
         formatted = format_for_telegram(reply)
         chunks = split_message(formatted)
 
         for i, chunk in enumerate(chunks):
-            try:
-                await update.message.reply_text(chunk, parse_mode="Markdown")
-            except Exception:
-                # Fallback to plain text if markdown fails
-                await update.message.reply_text(chunk)
+            if chunk.strip():
+                try:
+                    await update.message.reply_text(chunk, parse_mode="Markdown")
+                except Exception:
+                    await update.message.reply_text(chunk)
+        
+        # Send document if agent generated one
+        if filepath and os.path.exists(filepath):
+            with open(filepath, "rb") as f:
+                await update.message.reply_document(document=f)
 
     except Exception as e:
         logger.exception(f"Error processing message from user {user_id}")
@@ -123,9 +122,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         except asyncio.CancelledError:
             pass
 
-
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle file uploads — read content and feed to agent."""
     user = update.effective_user
     user_id = user.id
 
@@ -136,7 +133,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document
     caption = update.message.caption or ""
 
-    # Only handle text-based files
     allowed_extensions = {
         ".py", ".js", ".ts", ".jsx", ".tsx", ".html", ".css",
         ".json", ".yaml", ".yml", ".md", ".txt", ".csv", ".xml",
@@ -181,20 +177,30 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             None, ask_agent, user_message, history, stats
         )
 
+        file_path_match = re.search(r"__FILE_PATH__=([\w\./-]+)", reply)
+        filepath = None
+        if file_path_match:
+            filepath = file_path_match.group(1)
+            reply = reply.replace(file_path_match.group(0), "").strip()
+
         store.add_message("user", f"[Uploaded file: {filename}] {caption}")
         store.add_message("assistant", reply)
 
         chunks = split_message(format_for_telegram(reply))
         for chunk in chunks:
-            try:
-                await update.message.reply_text(chunk, parse_mode="Markdown")
-            except Exception:
-                await update.message.reply_text(chunk)
+            if chunk.strip():
+                try:
+                    await update.message.reply_text(chunk, parse_mode="Markdown")
+                except Exception:
+                    await update.message.reply_text(chunk)
+                    
+        if filepath and os.path.exists(filepath):
+            with open(filepath, "rb") as f:
+                await update.message.reply_document(document=f)
 
     except Exception as e:
         logger.exception("Error handling document")
         await update.message.reply_text(f"❌ Error reading file: {str(e)}")
-
 
 def register_message_handlers(app):
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
