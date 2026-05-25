@@ -98,7 +98,7 @@ KEY_PATTERNS = [
     (r'sk-ant-[A-Za-z0-9\-_]{20,}', "anthropic_api_key"),
     (r'ghp_[A-Za-z0-9]{36,}', "github_token"),
     (r'github_pat_[A-Za-z0-9_]{80,}', "github_token"),
-    (r'tvly-[A-Za-z0-9]{32,}', "tavily_api_key"),
+    (r'tvly-[A-Za-z0-9\-_]{30,}', "tavily_api_key"),
 ]
 
 KEY_FRIENDLY = {
