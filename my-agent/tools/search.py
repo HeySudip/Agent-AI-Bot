@@ -102,13 +102,10 @@ def build_search_tools() -> list:
         except Exception as e:
             return f"News search unavailable: {str(e)}"
 
-        @tool
+            @tool
     def save_api_key(key_type: str, key_value: str) -> str:
         """
         Save an API key or token provided by the user.
-        key_type values: 'gemini', 'anthropic', 'github', 'tavily'
-        key_value: the actual key/token string
-        Use this when the user shares any API key or token.
         """
         from config import load_config, save_config, set_key
         key_map = {
@@ -123,7 +120,7 @@ def build_search_tools() -> list:
         }
         actual_key = key_map.get(key_type.lower().strip())
         if not actual_key:
-            return f"Unknown key type '{key_type}'. Valid: gemini, anthropic, github, tavily"
+            return f"Unknown key type '{key_type}'."
             
         if "gemini" in actual_key:
             cfg = load_config()
