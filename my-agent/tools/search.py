@@ -147,48 +147,48 @@ def build_search_tools() -> list:
         return f"✅ {friendly.get(actual_key, actual_key)} saved successfully!
 
     return [search_web, search_news, save_api_key]
-@tool
-def save_api_key(key_type: str, key_value: str) -> str:
-    """
-    Save an API key or token provided by the user.
-    key_type values: 'gemini', 'anthropic', 'github', 'tavily'
-    key_value: the actual key/token string
-    Use this when the user shares any API key or token.
-    """
-    from config import load_config, save_config, set_key
-    key_map = {
-        "gemini": "gemini_api_key",
-        "anthropic": "anthropic_api_key",
-        "github": "github_token",
-        "tavily": "tavily_api_key",
-        "gemini_api_key": "gemini_api_key",
-        "anthropic_api_key": "anthropic_api_key",
-        "github_token": "github_token",
-        "tavily_api_key": "tavily_api_key",
-    }
-    actual_key = key_map.get(key_type.lower().strip())
-    if not actual_key:
-        return f"Unknown key type '{key_type}'. Valid: gemini, anthropic, github, tavily"
-        
-    if "gemini" in actual_key:
-        cfg = load_config()
-        keys = cfg.get("gemini_api_keys", [])
-        old = cfg.get("gemini_api_key", "")
-        if old and old not in keys: keys.append(old)
-        if key_value.strip() not in keys:
-            keys.append(key_value.strip())
-        cfg["gemini_api_keys"] = keys
-        cfg["gemini_api_key"] = key_value.strip()
-        save_config(cfg)
-        return "✅ Gemini API key added to your pool of keys! I will cycle through them automatically to bypass rate limits."
-        
-    set_key(actual_key, key_value.strip())
-    friendly = {
-        "gemini_api_key": "Gemini API key",
-        "anthropic_api_key": "Anthropic API key",
-        "github_token": "GitHub token",
-        "tavily_api_key": "Tavily API key",
-    }
-    return f"✅ {friendly.get(actual_key, actual_key)} saved successfully!"
+    @tool
+    def save_api_key(key_type: str, key_value: str) -> str:
+        """
+        Save an API key or token provided by the user.
+        key_type values: 'gemini', 'anthropic', 'github', 'tavily'
+        key_value: the actual key/token string
+        Use this when the user shares any API key or token.
+        """
+        from config import load_config, save_config, set_key
+        key_map = {
+            "gemini": "gemini_api_key",
+            "anthropic": "anthropic_api_key",
+            "github": "github_token",
+            "tavily": "tavily_api_key",
+            "gemini_api_key": "gemini_api_key",
+            "anthropic_api_key": "anthropic_api_key",
+            "github_token": "github_token",
+            "tavily_api_key": "tavily_api_key",
+        }
+        actual_key = key_map.get(key_type.lower().strip())
+        if not actual_key:
+            return f"Unknown key type '{key_type}'. Valid: gemini, anthropic, github, tavily"
+            
+        if "gemini" in actual_key:
+            cfg = load_config()
+            keys = cfg.get("gemini_api_keys", [])
+            old = cfg.get("gemini_api_key", "")
+            if old and old not in keys: keys.append(old)
+            if key_value.strip() not in keys:
+                keys.append(key_value.strip())
+            cfg["gemini_api_keys"] = keys
+            cfg["gemini_api_key"] = key_value.strip()
+            save_config(cfg)
+            return "✅ Gemini API key added to your pool of keys! I will cycle through them automatically to bypass rate limits."
+            
+        set_key(actual_key, key_value.strip())
+        friendly = {
+            "gemini_api_key": "Gemini API key",
+            "anthropic_api_key": "Anthropic API key",
+            "github_token": "GitHub token",
+            "tavily_api_key": "Tavily API key",
+        }
+        return f"✅ {friendly.get(actual_key, actual_key)} saved successfully!"
 
     return [search_web, search_news, save_api_key]
