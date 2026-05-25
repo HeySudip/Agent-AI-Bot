@@ -4,7 +4,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
+CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config/config.json")
 
 DEFAULT_CONFIG = {
     "gemini_api_key": "",
