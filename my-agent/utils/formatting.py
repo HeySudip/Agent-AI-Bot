@@ -73,7 +73,7 @@ def format_for_telegram(text: str) -> str:
     return "\n".join(output)
 
 
-def split_message(text: str, max_len: int = MAX_TELEGRAM_LENGTH) -> list[str]:
+def split_message(text: str, max_len: int = MAX_TELEGRAM_LENGTH) -> list:
     """Split a long message into chunks that fit Telegram's limit."""
     if len(text) <= max_len:
         return [text]
@@ -110,7 +110,7 @@ def split_message(text: str, max_len: int = MAX_TELEGRAM_LENGTH) -> list[str]:
     return chunks or [text[:max_len]]
 
 
-def format_repo_list(repos: list[dict]) -> str:
+def format_repo_list(repos: list) -> str:
     if not repos:
         return "No repositories found."
     lines = []

@@ -43,7 +43,7 @@ def build_search_tools() -> list:
 
         # Fallback: DuckDuckGo via ddgs
         try:
-            from ddgs import DDGS
+            from duckduckgo_search import DDGS
             with DDGS() as ddgs:
                 results = list(ddgs.text(query, max_results=6))
             if not results:
@@ -89,7 +89,7 @@ def build_search_tools() -> list:
 
         # Fallback: DuckDuckGo news via ddgs
         try:
-            from ddgs import DDGS
+            from duckduckgo_search import DDGS
             with DDGS() as ddgs:
                 results = list(ddgs.news(query, max_results=5))
             if not results:

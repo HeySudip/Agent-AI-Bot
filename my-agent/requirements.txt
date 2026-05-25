@@ -1,7 +1,12 @@
 langgraph
 langchain-anthropic
+langchain-google-genai
 langchain-community
 duckduckgo-search
 PyGithub
 python-telegram-bot
 python-dotenv
+beautifulsoup4
+requests
+lxml
+tavily-python

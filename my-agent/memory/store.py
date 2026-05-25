@@ -83,7 +83,7 @@ class ConversationStore:
             )
         self._trim()
 
-    def get_history(self, limit: Optional[int] = None) -> list[dict]:
+    def get_history(self, limit: Optional[int] = None) -> list:
         n = limit or self.max_length
         with get_connection() as conn:
             rows = conn.execute(
@@ -95,7 +95,7 @@ class ConversationStore:
             ).fetchall()
         return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
 
-    def get_history_with_timestamps(self, limit: int = 50) -> list[dict]:
+    def get_history_with_timestamps(self, limit: int = 50) -> list:
         with get_connection() as conn:
             rows = conn.execute(
                 """SELECT role, content, timestamp, message_type FROM conversations
@@ -205,7 +205,7 @@ class UserStats:
                 (self.user_id, action, details, time.time())
             )
 
-    def get_recent_actions(self, limit: int = 20) -> list[dict]:
+    def get_recent_actions(self, limit: int = 20) -> list:
         with get_connection() as conn:
             rows = conn.execute(
                 """SELECT action, details, timestamp FROM usage_log
@@ -228,7 +228,7 @@ class UserStats:
                 (self.user_id, note, time.time())
             )
 
-    def get_notes(self) -> list[dict]:
+    def get_notes(self) -> list:
         with get_connection() as conn:
             rows = conn.execute(
                 "SELECT note, created_at FROM user_notes WHERE user_id = ? ORDER BY created_at DESC",
@@ -243,7 +243,7 @@ class UserStats:
         ]
 
 
-def get_all_users() -> list[dict]:
+def get_all_users() -> list:
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT * FROM user_stats ORDER BY total_messages DESC"
