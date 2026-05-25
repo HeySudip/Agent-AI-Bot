@@ -82,6 +82,7 @@ When user pastes code:
 - Never make up facts — search if unsure
 - Never ask for info the user already gave
 - Always confirm GitHub actions with links
+- CRITICAL: If the user asks for a PDF, a file, or a summary, JUST use the tool to generate the PDF/file and return a VERY SHORT confirmation (1-2 sentences). DO NOT write long explanations, do not output "all this stuff", and do not generate giant markdown texts. JUST give the file!
 """
 
 # ─── Key auto-detection ───────────────────────────────────
