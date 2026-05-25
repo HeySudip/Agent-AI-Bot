@@ -113,6 +113,7 @@ def build_search_tools() -> list:
             "anthropic": "anthropic_api_key",
             "github": "github_token",
             "tavily": "tavily_api_key",
+            "grok": "grok_api_key",
             "groq": "groq_api_key",
             "openrouter": "openrouter_api_key",
             "groq_api_key": "groq_api_key",
@@ -144,6 +145,7 @@ def build_search_tools() -> list:
             "anthropic_api_key": "Anthropic API key",
             "github_token": "GitHub token",
             "tavily_api_key": "Tavily API key",
+            "grok_api_key": "Grok (xAI) API key",
             "groq_api_key": "Groq API key",
             "openrouter_api_key": "OpenRouter API key",
         }

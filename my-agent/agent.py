@@ -102,6 +102,7 @@ KEY_PATTERNS = [
 ]
 
 KEY_FRIENDLY = {
+    "grok_api_key": "Grok (xAI)",
     "openrouter_api_key": "OpenRouter",
     "groq_api_key": "Groq",
     "gemini_api_key": "Gemini",
@@ -260,6 +261,23 @@ def get_llm(preferred_model: str = ""):
         except Exception as e:
             logger.error(f"OpenRouter error: {e}")
 
+    
+    grok_key = config.get("grok_api_key", "")
+    if grok_key:
+        try:
+            from langchain_openai import ChatOpenAI
+            llm = ChatOpenAI(
+                api_key=grok_key,
+                base_url="https://api.x.ai/v1",
+                model="grok-2-latest",
+                temperature=0.7
+            )
+            agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
+            result = agent.invoke({"messages": messages})
+            return _extract_text(result["messages"][-1].content)
+        except Exception as e:
+            logger.error(f"Grok error: {e}")
+
     anthropic_key = config.get("anthropic_api_key", "")
     if anthropic_key:
         try:
@@ -374,6 +392,23 @@ def _invoke_with_retry(user_message: str, chat_history: list) -> str:
         except Exception as e:
             logger.error(f"OpenRouter error: {e}")
 
+    
+    grok_key = config.get("grok_api_key", "")
+    if grok_key:
+        try:
+            from langchain_openai import ChatOpenAI
+            llm = ChatOpenAI(
+                api_key=grok_key,
+                base_url="https://api.x.ai/v1",
+                model="grok-2-latest",
+                temperature=0.7
+            )
+            agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
+            result = agent.invoke({"messages": messages})
+            return _extract_text(result["messages"][-1].content)
+        except Exception as e:
+            logger.error(f"Grok error: {e}")
+
     anthropic_key = config.get("anthropic_api_key", "")
     if anthropic_key:
         try:
@@ -411,7 +446,7 @@ def ask_agent(user_message: str, chat_history: list = [], stats=None) -> str:
 
     # Check an LLM is available
     config = load_config()
-    has_llm = config.get("gemini_api_key") or config.get("gemini_api_keys") or config.get("anthropic_api_key") or config.get("groq_api_key") or config.get("openrouter_api_key")
+    has_llm = config.get("gemini_api_key") or config.get("gemini_api_keys") or config.get("anthropic_api_key") or config.get("groq_api_key") or config.get("openrouter_api_key") or config.get("grok_api_key")
     if not has_llm:
         return (
             "I need an API key to get started! 🔑\n\n"
@@ -441,12 +476,13 @@ def ask_agent(user_message: str, chat_history: list = [], stats=None) -> str:
                 "Paste a fresh key here:\n"
                 "• Gemini: aistudio.google.com/app/apikey → starts with `AIzaSy...`\n"
                 "• Anthropic: console.anthropic.com → starts with `sk-ant-...`\n"
-                "• Groq: console.groq.com → starts with `gsk_...`\n"
+                "• Groq: console.groq.com → starts with `gsk_...`\n• Grok: console.x.ai → starts with `xai-...`\n"
+                "• Grok (xAI): console.x.ai → starts with `xai-`\n"
                 "• OpenRouter: openrouter.ai/keys → starts with `sk-or-v1-...`"
             )
         elif "no_llm" in error_str:
             config = load_config()
-            if config.get("gemini_api_key") or config.get("gemini_api_keys") or config.get("anthropic_api_key") or config.get("groq_api_key") or config.get("openrouter_api_key"):
+            if config.get("gemini_api_key") or config.get("gemini_api_keys") or config.get("anthropic_api_key") or config.get("groq_api_key") or config.get("openrouter_api_key") or config.get("grok_api_key"):
                 return "⚠️ All AI models failed to respond. This may be a temporary outage — try again in a moment."
             return "No API key configured. Paste a Gemini (`AIzaSy...`) or Anthropic (`sk-ant-...`) key in chat."
         else:
