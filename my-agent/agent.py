@@ -211,14 +211,14 @@ def get_llm(preferred_model: str = ""):
     if groq_key:
         try:
             from langchain_groq import ChatGroq
-            return ChatGroq(model="llama3-70b-8192", api_key=groq_key, temperature=0.7), "groq", "llama3-70b-8192"
+            return ChatGroq(model="llama3-8b-8192", api_key=groq_key, temperature=0.7), "groq", "llama3-8b-8192"
         except Exception as e:
             logger.warning(f"Groq init failed: {e}")
             
     openrouter_key = config.get("openrouter_api_key", "")
     if openrouter_key:
         try:
-            from langchain_community.chat_models import ChatOpenAI
+            from langchain_openai import ChatOpenAI
             llm = ChatOpenAI(
                 openai_api_base="https://openrouter.ai/api/v1",
                 openai_api_key=openrouter_key,
@@ -234,7 +234,7 @@ def get_llm(preferred_model: str = ""):
     if groq_key:
         try:
             from langchain_groq import ChatGroq
-            llm = ChatGroq(model="llama3-70b-8192", api_key=groq_key, temperature=0.7)
+            llm = ChatGroq(model="llama3-8b-8192", api_key=groq_key, temperature=0.7)
             agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
             result = agent.invoke({"messages": messages})
             return _extract_text(result["messages"][-1].content)
@@ -247,7 +247,7 @@ def get_llm(preferred_model: str = ""):
     openrouter_key = config.get("openrouter_api_key", "")
     if openrouter_key:
         try:
-            from langchain_community.chat_models import ChatOpenAI
+            from langchain_openai import ChatOpenAI
             llm = ChatOpenAI(
                 openai_api_base="https://openrouter.ai/api/v1",
                 openai_api_key=openrouter_key,
@@ -325,14 +325,14 @@ def _invoke_with_retry(user_message: str, chat_history: list) -> str:
     if groq_key:
         try:
             from langchain_groq import ChatGroq
-            return ChatGroq(model="llama3-70b-8192", api_key=groq_key, temperature=0.7), "groq", "llama3-70b-8192"
+            return ChatGroq(model="llama3-8b-8192", api_key=groq_key, temperature=0.7), "groq", "llama3-8b-8192"
         except Exception as e:
             logger.warning(f"Groq init failed: {e}")
             
     openrouter_key = config.get("openrouter_api_key", "")
     if openrouter_key:
         try:
-            from langchain_community.chat_models import ChatOpenAI
+            from langchain_openai import ChatOpenAI
             llm = ChatOpenAI(
                 openai_api_base="https://openrouter.ai/api/v1",
                 openai_api_key=openrouter_key,
@@ -348,7 +348,7 @@ def _invoke_with_retry(user_message: str, chat_history: list) -> str:
     if groq_key:
         try:
             from langchain_groq import ChatGroq
-            llm = ChatGroq(model="llama3-70b-8192", api_key=groq_key, temperature=0.7)
+            llm = ChatGroq(model="llama3-8b-8192", api_key=groq_key, temperature=0.7)
             agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
             result = agent.invoke({"messages": messages})
             return _extract_text(result["messages"][-1].content)
@@ -361,7 +361,7 @@ def _invoke_with_retry(user_message: str, chat_history: list) -> str:
     openrouter_key = config.get("openrouter_api_key", "")
     if openrouter_key:
         try:
-            from langchain_community.chat_models import ChatOpenAI
+            from langchain_openai import ChatOpenAI
             llm = ChatOpenAI(
                 openai_api_base="https://openrouter.ai/api/v1",
                 openai_api_key=openrouter_key,
