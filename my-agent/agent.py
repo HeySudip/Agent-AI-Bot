@@ -102,6 +102,8 @@ KEY_PATTERNS = [
 ]
 
 KEY_FRIENDLY = {
+    "openrouter_api_key": "OpenRouter",
+    "groq_api_key": "Groq",
     "gemini_api_key": "Gemini",
     "anthropic_api_key": "Anthropic",
     "github_token": "GitHub",
@@ -205,6 +207,59 @@ def get_llm(preferred_model: str = ""):
             except Exception as e:
                 logger.warning(f"Gemini ({model}) init failed for a key: {e}")
 
+    groq_key = config.get("groq_api_key", "")
+    if groq_key:
+        try:
+            from langchain_groq import ChatGroq
+            return ChatGroq(model="llama3-70b-8192", api_key=groq_key, temperature=0.7), "groq", "llama3-70b-8192"
+        except Exception as e:
+            logger.warning(f"Groq init failed: {e}")
+            
+    openrouter_key = config.get("openrouter_api_key", "")
+    if openrouter_key:
+        try:
+            from langchain_community.chat_models import ChatOpenAI
+            llm = ChatOpenAI(
+                openai_api_base="https://openrouter.ai/api/v1",
+                openai_api_key=openrouter_key,
+                model_name="google/gemini-2.0-flash-lite-preview-02-05:free",
+                temperature=0.7
+            )
+            return llm, "openrouter", "google/gemini-2.0-flash-lite-preview-02-05:free"
+        except Exception as e:
+            logger.warning(f"OpenRouter init failed: {e}")
+
+    
+    groq_key = config.get("groq_api_key", "")
+    if groq_key:
+        try:
+            from langchain_groq import ChatGroq
+            llm = ChatGroq(model="llama3-70b-8192", api_key=groq_key, temperature=0.7)
+            agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
+            result = agent.invoke({"messages": messages})
+            return _extract_text(result["messages"][-1].content)
+        except Exception as e:
+            if _is_rate_limit_error(str(e)):
+                logger.warning("Groq rate limited")
+            else:
+                logger.error(f"Groq error: {e}")
+
+    openrouter_key = config.get("openrouter_api_key", "")
+    if openrouter_key:
+        try:
+            from langchain_community.chat_models import ChatOpenAI
+            llm = ChatOpenAI(
+                openai_api_base="https://openrouter.ai/api/v1",
+                openai_api_key=openrouter_key,
+                model_name="google/gemini-2.0-flash-lite-preview-02-05:free",
+                temperature=0.7
+            )
+            agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
+            result = agent.invoke({"messages": messages})
+            return _extract_text(result["messages"][-1].content)
+        except Exception as e:
+            logger.error(f"OpenRouter error: {e}")
+
     anthropic_key = config.get("anthropic_api_key", "")
     if anthropic_key:
         try:
@@ -266,6 +321,59 @@ def _invoke_with_retry(user_message: str, chat_history: list) -> str:
         else:
             logger.warning("All Gemini models/keys exhausted.")
 
+    groq_key = config.get("groq_api_key", "")
+    if groq_key:
+        try:
+            from langchain_groq import ChatGroq
+            return ChatGroq(model="llama3-70b-8192", api_key=groq_key, temperature=0.7), "groq", "llama3-70b-8192"
+        except Exception as e:
+            logger.warning(f"Groq init failed: {e}")
+            
+    openrouter_key = config.get("openrouter_api_key", "")
+    if openrouter_key:
+        try:
+            from langchain_community.chat_models import ChatOpenAI
+            llm = ChatOpenAI(
+                openai_api_base="https://openrouter.ai/api/v1",
+                openai_api_key=openrouter_key,
+                model_name="google/gemini-2.0-flash-lite-preview-02-05:free",
+                temperature=0.7
+            )
+            return llm, "openrouter", "google/gemini-2.0-flash-lite-preview-02-05:free"
+        except Exception as e:
+            logger.warning(f"OpenRouter init failed: {e}")
+
+    
+    groq_key = config.get("groq_api_key", "")
+    if groq_key:
+        try:
+            from langchain_groq import ChatGroq
+            llm = ChatGroq(model="llama3-70b-8192", api_key=groq_key, temperature=0.7)
+            agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
+            result = agent.invoke({"messages": messages})
+            return _extract_text(result["messages"][-1].content)
+        except Exception as e:
+            if _is_rate_limit_error(str(e)):
+                logger.warning("Groq rate limited")
+            else:
+                logger.error(f"Groq error: {e}")
+
+    openrouter_key = config.get("openrouter_api_key", "")
+    if openrouter_key:
+        try:
+            from langchain_community.chat_models import ChatOpenAI
+            llm = ChatOpenAI(
+                openai_api_base="https://openrouter.ai/api/v1",
+                openai_api_key=openrouter_key,
+                model_name="google/gemini-2.0-flash-lite-preview-02-05:free",
+                temperature=0.7
+            )
+            agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
+            result = agent.invoke({"messages": messages})
+            return _extract_text(result["messages"][-1].content)
+        except Exception as e:
+            logger.error(f"OpenRouter error: {e}")
+
     anthropic_key = config.get("anthropic_api_key", "")
     if anthropic_key:
         try:
@@ -303,7 +411,7 @@ def ask_agent(user_message: str, chat_history: list = [], stats=None) -> str:
 
     # Check an LLM is available
     config = load_config()
-    has_llm = config.get("gemini_api_key") or config.get("gemini_api_keys") or config.get("anthropic_api_key")
+    has_llm = config.get("gemini_api_key") or config.get("gemini_api_keys") or config.get("anthropic_api_key") or config.get("groq_api_key") or config.get("openrouter_api_key")
     if not has_llm:
         return (
             "I need an API key to get started! 🔑\n\n"
@@ -311,7 +419,9 @@ def ask_agent(user_message: str, chat_history: list = [], stats=None) -> str:
             "1. Go to aistudio.google.com/app/apikey\n"
             "2. Click 'Create API key'\n"
             "3. Paste it here (starts with `AIzaSy...`)\n\n"
-            "Or paste an Anthropic key (`sk-ant-...`) if you have one."
+            "Or paste an Anthropic key (`sk-ant-...`).\n"
+            "Or paste a FREE Groq key (`gsk_...`) from console.groq.com.\n"
+            "Or paste a FREE OpenRouter key (`sk-or-v1-...`) from openrouter.ai/keys." 
         )
 
     try:
@@ -332,11 +442,13 @@ def ask_agent(user_message: str, chat_history: list = [], stats=None) -> str:
                 "❌ Your API key was rejected. It may be invalid or expired.\n\n"
                 "Paste a fresh key here:\n"
                 "• Gemini: aistudio.google.com/app/apikey → starts with `AIzaSy...`\n"
-                "• Anthropic: console.anthropic.com → starts with `sk-ant-...`"
+                "• Anthropic: console.anthropic.com → starts with `sk-ant-...`
+                • Groq: console.groq.com → starts with `gsk_...`
+                • OpenRouter: openrouter.ai/keys → starts with `sk-or-v1-...`"
             )
         elif "no_llm" in error_str:
             config = load_config()
-            if config.get("gemini_api_key") or config.get("gemini_api_keys") or config.get("anthropic_api_key"):
+            if config.get("gemini_api_key") or config.get("gemini_api_keys") or config.get("anthropic_api_key") or config.get("groq_api_key") or config.get("openrouter_api_key"):
                 return "⚠️ All AI models failed to respond. This may be a temporary outage — try again in a moment."
             return "No API key configured. Paste a Gemini (`AIzaSy...`) or Anthropic (`sk-ant-...`) key in chat."
         else:

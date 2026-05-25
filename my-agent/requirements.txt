@@ -13,3 +13,6 @@ tavily-python
 youtube-transcript-api
 fpdf2
 langchain
+
+langchain-groq
+langchain-openai

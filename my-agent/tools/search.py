@@ -113,6 +113,10 @@ def build_search_tools() -> list:
             "anthropic": "anthropic_api_key",
             "github": "github_token",
             "tavily": "tavily_api_key",
+            "groq": "groq_api_key",
+            "openrouter": "openrouter_api_key",
+            "groq_api_key": "groq_api_key",
+            "openrouter_api_key": "openrouter_api_key",
             "gemini_api_key": "gemini_api_key",
             "anthropic_api_key": "anthropic_api_key",
             "github_token": "github_token",
@@ -140,6 +144,8 @@ def build_search_tools() -> list:
             "anthropic_api_key": "Anthropic API key",
             "github_token": "GitHub token",
             "tavily_api_key": "Tavily API key",
+            "groq_api_key": "Groq API key",
+            "openrouter_api_key": "OpenRouter API key",
         }
         return f"✅ {friendly.get(actual_key, actual_key)} saved successfully!"
 
