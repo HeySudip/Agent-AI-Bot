@@ -12,3 +12,4 @@ lxml
 tavily-python
 youtube-transcript-api
 fpdf2
+langchain
