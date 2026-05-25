@@ -211,7 +211,7 @@ def get_llm(preferred_model: str = ""):
     if groq_key:
         try:
             from langchain_groq import ChatGroq
-            return ChatGroq(model="llama3-8b-8192", api_key=groq_key, temperature=0.7), "groq", "llama3-8b-8192"
+            return ChatGroq(model="llama-3.3-70b-versatile", api_key=groq_key, temperature=0.7), "groq", "llama-3.3-70b-versatile"
         except Exception as e:
             logger.warning(f"Groq init failed: {e}")
             
@@ -234,7 +234,7 @@ def get_llm(preferred_model: str = ""):
     if groq_key:
         try:
             from langchain_groq import ChatGroq
-            llm = ChatGroq(model="llama3-8b-8192", api_key=groq_key, temperature=0.7)
+            llm = ChatGroq(model="llama-3.3-70b-versatile", api_key=groq_key, temperature=0.7)
             agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
             result = agent.invoke({"messages": messages})
             return _extract_text(result["messages"][-1].content)
@@ -325,7 +325,7 @@ def _invoke_with_retry(user_message: str, chat_history: list) -> str:
     if groq_key:
         try:
             from langchain_groq import ChatGroq
-            return ChatGroq(model="llama3-8b-8192", api_key=groq_key, temperature=0.7), "groq", "llama3-8b-8192"
+            return ChatGroq(model="llama-3.3-70b-versatile", api_key=groq_key, temperature=0.7), "groq", "llama-3.3-70b-versatile"
         except Exception as e:
             logger.warning(f"Groq init failed: {e}")
             
@@ -348,7 +348,7 @@ def _invoke_with_retry(user_message: str, chat_history: list) -> str:
     if groq_key:
         try:
             from langchain_groq import ChatGroq
-            llm = ChatGroq(model="llama3-8b-8192", api_key=groq_key, temperature=0.7)
+            llm = ChatGroq(model="llama-3.3-70b-versatile", api_key=groq_key, temperature=0.7)
             agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
             result = agent.invoke({"messages": messages})
             return _extract_text(result["messages"][-1].content)
