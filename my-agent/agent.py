@@ -93,6 +93,12 @@ When user pastes code:
 
 KEY_PATTERNS = [
     (r'AIzaSy[A-Za-z0-9_-]{30,50}', "gemini_api_key"),
+    (r'[A-Za-z0-9+/=]{80,100}', "gemini_api_key"),
+    (r'sk-ant-[A-Za-z0-9\-_]{20,}', "anthropic_api_key"),
+    (r'ghp_[A-Za-z0-9]{36,}', "github_token"),
+    (r'github_pat_[A-Za-z0-9_]{80,}', "github_token"),
+    (r'tvly-[A-Za-z0-9]{32,}', "tavily_api_key"),
+]{30,50}', "gemini_api_key"),
     (r'\bsk-ant-[A-Za-z0-9\-_]{20,}\b', "anthropic_api_key"),
     (r'\bghp_[A-Za-z0-9]{36,}\b', "github_token"),
     (r'\bgithub_pat_[A-Za-z0-9_]{80,}\b', "github_token"),
