@@ -102,7 +102,7 @@ def build_search_tools() -> list:
         except Exception as e:
             return f"News search unavailable: {str(e)}"
 
-            @tool
+    @tool
     def save_api_key(key_type: str, key_value: str) -> str:
         """
         Save an API key or token provided by the user.
