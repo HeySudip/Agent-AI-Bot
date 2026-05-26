@@ -1,0 +1,112 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-ai-bot"
+version = "1.1.0"
+description = "Conversational Telegram AI agent with tools for web search, GitHub, URL summarization, and more."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "HeySudip" }]
+keywords = ["telegram", "ai", "agent", "llm", "gemini", "claude"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Chat",
+]
+dependencies = [
+    "langgraph",
+    "langchain",
+    "langchain-anthropic",
+    "langchain-google-genai",
+    "langchain-community",
+    "langchain-groq",
+    "langchain-openai",
+    "langchain-huggingface",
+    "duckduckgo-search",
+    "PyGithub",
+    "python-telegram-bot",
+    "python-dotenv",
+    "beautifulsoup4",
+    "requests",
+    "lxml",
+    "tavily-python",
+    "youtube-transcript-api",
+    "fpdf2",
+    "huggingface_hub",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-mock>=3",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+    "mypy>=1.10",
+]
+observability = [
+    "structlog>=24",
+    "tenacity>=8",
+]
+
+[project.urls]
+Homepage = "https://github.com/HeySudip/Agent-AI-Bot"
+Issues = "https://github.com/HeySudip/Agent-AI-Bot/issues"
+
+[tool.setuptools]
+py-modules = [
+    "agent",
+    "bot",
+    "config",
+    "exceptions",
+    "logging_config",
+    "settings",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["handlers*", "memory*", "safety*", "tools*", "utils*"]
+exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["data.db", "config"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # long lines (handled by formatter where useful)
+    "B008",  # function calls in default arguments — common in tool decorators
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true
+files = ["safety", "exceptions.py", "logging_config.py", "settings.py", "utils/async_utils.py"]

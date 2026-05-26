@@ -1,22 +1,30 @@
+# Core agent / LLM stack
 langgraph
+langchain
 langchain-anthropic
 langchain-google-genai
 langchain-community
-duckduckgo-search
-PyGithub
+langchain-groq
+langchain-openai
+langchain-huggingface
+
+# Telegram + env loading
 python-telegram-bot
 python-dotenv
+
+# Web search & scraping
+duckduckgo-search
+tavily-python
 beautifulsoup4
 requests
 lxml
-tavily-python
+
+# GitHub + media tools
+PyGithub
 youtube-transcript-api
 fpdf2
-langchain
-
-langchain-groq
-langchain-openai
-
 huggingface_hub
 
-langchain-huggingface
+# Observability (optional but strongly recommended)
+structlog>=24
+tenacity>=8

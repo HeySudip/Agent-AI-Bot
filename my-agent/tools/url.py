@@ -3,6 +3,8 @@ import logging
 import requests
 from langchain.tools import tool
 
+from safety.ssrf_guard import SSRFBlockedError, assert_url_is_safe
+
 logger = logging.getLogger(__name__)
 
 HEADERS = {
@@ -15,11 +17,41 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.5",
 }
 
+_MAX_REDIRECTS = 5
+
+
+def _safe_get(url: str, *, timeout: int = 20, allow_redirects: bool = True):
+    """Issue a GET that is SSRF-safe at every redirect hop."""
+    assert_url_is_safe(url)
+    if not allow_redirects:
+        return requests.get(url, headers=HEADERS, timeout=timeout, allow_redirects=False)
+
+    session = requests.Session()
+    current = url
+    for _ in range(_MAX_REDIRECTS + 1):
+        resp = session.get(current, headers=HEADERS, timeout=timeout, allow_redirects=False)
+        if resp.is_redirect or resp.is_permanent_redirect:
+            next_url = resp.headers.get("location", "")
+            if not next_url:
+                return resp
+            if next_url.startswith("/"):
+                from urllib.parse import urljoin
+
+                next_url = urljoin(current, next_url)
+            assert_url_is_safe(next_url)
+            current = next_url
+            continue
+        return resp
+    raise requests.exceptions.TooManyRedirects(f"More than {_MAX_REDIRECTS} redirects.")
+
 
 def fetch_url_content(url: str, max_chars: int = 10000) -> str:
     """Fetch and extract readable text from a URL."""
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=20, allow_redirects=True)
+        try:
+            resp = _safe_get(url, timeout=20, allow_redirects=True)
+        except SSRFBlockedError as exc:
+            return f"Error: refused to fetch this URL — {exc}"
         resp.raise_for_status()
         content_type = resp.headers.get("content-type", "")
 
@@ -138,7 +170,10 @@ def build_url_tools() -> list:
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=10)
+            try:
+                resp = _safe_get(url, timeout=10, allow_redirects=True)
+            except SSRFBlockedError as exc:
+                return f"Error: refused to fetch this URL — {exc}"
             resp.raise_for_status()
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(resp.content, "html.parser")
@@ -172,7 +207,10 @@ def build_url_tools() -> list:
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=15)
+            try:
+                resp = _safe_get(url, timeout=15, allow_redirects=True)
+            except SSRFBlockedError as exc:
+                return f"Error: refused to fetch this URL — {exc}"
             resp.raise_for_status()
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(resp.content, "html.parser")

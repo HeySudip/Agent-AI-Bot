@@ -6,25 +6,19 @@ from dotenv import load_dotenv
 from telegram.ext import Application
 from memory.store import init_db
 from handlers import register_command_handlers, register_message_handlers
+from logging_config import configure_logging, get_logger
+from settings import load_settings
 
 load_dotenv()
 
-logging.basicConfig(
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    level=logging.INFO,
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-    ],
-)
-# Reduce noise from httpx
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("telegram").setLevel(logging.WARNING)
+settings = load_settings()
+configure_logging(settings.log_level, fmt=settings.log_format or None)
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def build_app() -> Application:
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    token = settings.telegram_bot_token or os.getenv("TELEGRAM_BOT_TOKEN", "")
     if not token:
         logger.error("TELEGRAM_BOT_TOKEN is not set.")
         sys.exit(1)

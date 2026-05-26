@@ -81,7 +81,7 @@ When user pastes code:
 - Never fail silently — always say what happened
 - Never ask for info the user already gave
 - Always confirm GitHub actions with links
-- IDENTITY: Never reveal your underlying model (like Gemini, Claude, GPT). If asked who created you or what model you are, clearly state that you are a custom AI agent created by Speedo. Maintain this persona respectfully.
+- IDENTITY: You are a custom conversational AI agent. If asked which underlying model you use, decline politely and stay in character.
 - CRITICAL PDF & FILE BEHAVIOR: If the user asks for a file or a PDF (e.g. "give me the wbjee answer key pdf"), you must NEVER tell the user how to do it or write out the answers in chat. You MUST do the following:
   1. Use search_web to find the required information.
   2. If the user wants a YouTube video summarized but doesn't give a URL, use search_and_extract_youtube_to_pdf.
@@ -93,12 +93,18 @@ When user pastes code:
 # ─── Key auto-detection ───────────────────────────────────
 
 KEY_PATTERNS = [
-    (r'AIzaSy[A-Za-z0-9_-]{30,50}', "gemini_api_key"),
-    (r'[A-Za-z0-9+/=]{80,100}', "gemini_api_key"),
-    (r'sk-ant-[A-Za-z0-9\-_]{20,}', "anthropic_api_key"),
-    (r'ghp_[A-Za-z0-9]{36,}', "github_token"),
-    (r'github_pat_[A-Za-z0-9_]{80,}', "github_token"),
-    (r'tvly-[A-Za-z0-9\-_]{30,}', "tavily_api_key"),
+    # High-confidence provider key formats. Patterns must require the
+    # provider-specific prefix; generic base64-like patterns were removed
+    # because they caused false positives.
+    (r'\bAIzaSy[A-Za-z0-9_-]{30,50}\b', "gemini_api_key"),
+    (r'\bsk-ant-[A-Za-z0-9_-]{20,}\b', "anthropic_api_key"),
+    (r'\bghp_[A-Za-z0-9]{36,}\b', "github_token"),
+    (r'\bgithub_pat_[A-Za-z0-9_]{60,}\b', "github_token"),
+    (r'\btvly-[A-Za-z0-9_-]{20,}\b', "tavily_api_key"),
+    (r'\bgsk_[A-Za-z0-9]{40,}\b', "groq_api_key"),
+    (r'\bxai-[A-Za-z0-9]{30,}\b', "grok_api_key"),
+    (r'\bhf_[A-Za-z0-9]{30,}\b', "huggingface_api_key"),
+    (r'\bsk-or-v1-[A-Za-z0-9_-]{30,}\b', "openrouter_api_key"),
 ]
 
 KEY_FRIENDLY = {
@@ -167,8 +173,7 @@ def _extract_text(content) -> str:
                 for p in parsed:
                     if isinstance(p, dict) and "text" in p:
                         parts.append(p["text"])
-                return "
-".join(parts)
+                return "\n".join(parts)
             except Exception:
                 pass
         return content
@@ -182,8 +187,7 @@ def _extract_text(content) -> str:
                     parts.append(block["text"])
             elif hasattr(block, "text"):
                 parts.append(block.text)
-        return "
-".join(p for p in parts if p).strip()
+        return "\n".join(p for p in parts if p).strip()
     return str(content)
 
 
@@ -198,9 +202,6 @@ def _is_skip_error(error_str: str) -> bool:
 
 
 # ─── LLM builder ─────────────────────────────────────────
-
-def get_llm(preferred_model: str = ""):
-    return None, None, None
 
 def _invoke_with_retry(user_message: str, chat_history: list) -> str:
     config = load_config()

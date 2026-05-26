@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timezone
 from langchain.tools import tool
 from config import load_config
+from safety.safe_eval import SafeEvalError, safe_eval
 
 logger = logging.getLogger(__name__)
 
@@ -18,36 +19,22 @@ def build_utility_tools() -> list:
         Evaluate a mathematical expression safely.
         Supports: +, -, *, /, **, %, sqrt, sin, cos, tan, log, abs, round, etc.
         Examples: "2 ** 10", "sqrt(144)", "sin(3.14159/2)", "log(100, 10)"
-        """
-        allowed_names = {
-            "abs": abs, "round": round, "min": min, "max": max, "sum": sum,
-            "sqrt": math.sqrt, "ceil": math.ceil, "floor": math.floor,
-            "sin": math.sin, "cos": math.cos, "tan": math.tan,
-            "asin": math.asin, "acos": math.acos, "atan": math.atan,
-            "log": math.log, "log2": math.log2, "log10": math.log10,
-            "exp": math.exp, "pow": math.pow, "factorial": math.factorial,
-            "pi": math.pi, "e": math.e, "inf": math.inf,
-            "degrees": math.degrees, "radians": math.radians,
-            "gcd": math.gcd, "lcm": getattr(math, "lcm", None),
-            "hypot": math.hypot, "comb": math.comb, "perm": math.perm,
-        }
-        allowed_names = {k: v for k, v in allowed_names.items() if v is not None}
 
-        # Sanitize
-        clean = re.sub(r'[^0-9+\-*/().,%\s\w]', '', expression)
+        Implementation: AST walker that allows only numeric literals, the
+        named constants pi/e/tau/inf, the standard arithmetic operators, and
+        a small allow-list of math functions. The previous ``eval()``-based
+        implementation was removed because it accepted arbitrary Python.
+        """
         try:
-            result = eval(clean, {"__builtins__": {}}, allowed_names)
-            if isinstance(result, float):
-                if result == int(result):
-                    return str(int(result))
-                return f"{result:.10g}"
-            return str(result)
-        except ZeroDivisionError:
-            return "Error: Division by zero"
-        except OverflowError:
-            return "Error: Result too large to compute"
-        except Exception as e:
-            return f"Error evaluating expression: {str(e)}"
+            result = safe_eval(expression)
+        except SafeEvalError as exc:
+            return f"Error: {exc}"
+
+        if isinstance(result, float):
+            if result.is_integer():
+                return str(int(result))
+            return f"{result:.10g}"
+        return str(result)
 
     @tool
     def get_current_datetime(timezone_name: str = "UTC") -> str:
