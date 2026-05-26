@@ -1,16 +1,17 @@
 """Document-style PDF tools (research and free-form text → PDF).
 
-Video-related work has moved to :mod:`tools.video`. This module now
-contains only the general-purpose research and text-to-PDF tools.
+Video-related work has moved to :mod:`tools.video`. This module contains
+the general-purpose research and text-to-PDF tools.
 
 The legacy ``extract_youtube_to_pdf`` / ``search_and_extract_youtube_to_pdf``
 / ``youtube_video_to_pdf`` symbols are kept as thin shims that forward to
-the new tool, so any saved chat prompts that reference those names still
-work.
+the new video tool, so any saved chat prompts referencing those names still work.
 """
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import logging
 import re
 import time
@@ -31,12 +32,50 @@ from .pdf_builder import (
     Rule,
     build_pdf,
 )
-from .pdf_builder import (
-    Paragraph as PdfParagraph,
-)
+from .pdf_builder import Paragraph as PdfParagraph
 from .video import run_video_to_pdf
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# LLM helper
+# ---------------------------------------------------------------------------
+
+
+def _llm_compile(prompt: str, *, max_tokens: int = 4000, temperature: float = 0.2) -> str:
+    """Call llm_provider.generate_text synchronously with fallback handling.
+
+    Uses the centralized provider (Gemini key rotation → Groq fallback).
+    Returns the generated text, or empty string on failure.
+    """
+    try:
+        from llm_provider import generate_text
+    except ImportError as exc:
+        logger.warning("llm_provider not available: %s", exc)
+        return ""
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    try:
+        if loop and loop.is_running():
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                text = pool.submit(
+                    asyncio.run,
+                    generate_text(prompt, temperature=temperature, max_tokens=max_tokens),
+                ).result(timeout=60)
+        else:
+            text = asyncio.run(
+                generate_text(prompt, temperature=temperature, max_tokens=max_tokens)
+            )
+    except Exception as exc:
+        logger.warning("LLM compilation failed: %s", exc)
+        return ""
+
+    return text.strip() if text else ""
 
 
 # ---------------------------------------------------------------------------
@@ -45,12 +84,13 @@ logger = logging.getLogger(__name__)
 
 
 def _safe_filename(seed: str, ext: str = ".pdf") -> str:
+    """Generate a safe temporary file path from a seed string."""
     safe = re.sub(r"[^a-zA-Z0-9_\-]+", "_", seed).strip("_")[:60] or "document"
     return f"/tmp/{safe}_{int(time.time())}{ext}"
 
 
 def _ddg_search(query: str, max_results: int = 8) -> list[dict[str, Any]]:
-    """DuckDuckGo / ddgs text search with a Bing scrape fallback."""
+    """DuckDuckGo text search with a Bing scrape fallback."""
     for pkg in ("ddgs", "duckduckgo_search"):
         try:
             if pkg == "ddgs":
@@ -63,6 +103,8 @@ def _ddg_search(query: str, max_results: int = 8) -> list[dict[str, Any]]:
                 return results
         except Exception as exc:
             logger.debug("Search via %s failed: %s", pkg, exc)
+
+    # Bing HTML fallback
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -186,114 +228,66 @@ def _try_download_pdf(url: str, save_path: str, timeout: int = 15) -> bool:
 
 
 def _is_answer_key_request(query: str) -> bool:
+    """Detect if the query is asking for an exam answer key or similar."""
     keywords = (
-        "answer key",
-        "answer sheet",
-        "question paper",
-        "question bank",
-        "solved paper",
-        "solution pdf",
-        "solutions pdf",
-        "answer pdf",
-        "key pdf",
-        "omr sheet",
-        "response sheet",
-        "official key",
-        "provisional key",
-        "final key",
-        "shift 1",
-        "shift 2",
-        "set a",
-        "set b",
-        "set c",
-        "set d",
-        "paper 1",
-        "paper 2",
+        "answer key", "answer sheet", "question paper", "question bank",
+        "solved paper", "solution pdf", "solutions pdf", "answer pdf",
+        "key pdf", "omr sheet", "response sheet", "official key",
+        "provisional key", "final key", "shift 1", "shift 2",
+        "set a", "set b", "set c", "set d", "paper 1", "paper 2",
     )
     lower = query.lower()
     return any(kw in lower for kw in keywords)
 
 
 def _is_exam_query(query: str) -> bool:
+    """Detect if the query references a known competitive exam."""
     exams = (
-        "wbjee",
-        "jee",
-        "neet",
-        "upsc",
-        "ssc",
-        "gate",
-        "cat",
-        "clat",
-        "cuet",
-        "bitsat",
-        "viteee",
-        "comedk",
-        "mht-cet",
-        "mhtcet",
-        "kcet",
-        "ap eamcet",
-        "ts eamcet",
-        "keam",
-        "cmat",
-        "xat",
-        "snap",
-        "mat",
-        "ielts",
-        "toefl",
-        "gre",
-        "gmat",
-        "ugc net",
-        "csir net",
-        "cbse",
-        "icse",
-        "isc",
-        "board exam",
+        "wbjee", "jee", "neet", "upsc", "ssc", "gate", "cat", "clat",
+        "cuet", "bitsat", "viteee", "comedk", "mht-cet", "mhtcet", "kcet",
+        "ap eamcet", "ts eamcet", "keam", "cmat", "xat", "snap", "mat",
+        "ielts", "toefl", "gre", "gmat", "ugc net", "csir net", "cbse",
+        "icse", "isc", "board exam",
     )
     lower = query.lower()
     return any(exam in lower for exam in exams)
 
 
-def _gemini_compile(prompt: str, *, max_output_tokens: int = 4000) -> str:
-    """Run a single Gemini call and return the text, or '' on failure."""
-    try:
-        from config import load_config
-    except ImportError:
-        return ""
-    cfg = load_config()
-    api_key = (
-        cfg.get("gemini_api_key")
-        or (cfg.get("gemini_api_keys") or [None])[0]
-        or ""
-    )
-    if not api_key:
-        return ""
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.0-flash:generateContent?key={api_key}"
-    )
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.2, "maxOutputTokens": max_output_tokens},
-    }
-    try:
-        r = requests.post(url, json=payload, timeout=45)
-    except requests.RequestException as exc:
-        logger.warning("Gemini request failed: %s", exc)
-        return ""
-    if r.status_code != 200:
-        logger.warning("Gemini API HTTP %s: %s", r.status_code, r.text[:200])
-        return ""
-    try:
-        return (
-            r.json()
-            .get("candidates", [{}])[0]
-            .get("content", {})
-            .get("parts", [{}])[0]
-            .get("text", "")
-            .strip()
-        )
-    except Exception:
-        return ""
+def _looks_like_bullets(text: str) -> bool:
+    """Return True if the text block looks like a bulleted/numbered list."""
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return False
+    return all(re.match(r"^\s*([-*•]|\d+[.)])\s+", line) for line in lines)
+
+
+def _extract_bullets(text: str) -> list[str]:
+    """Extract bullet items from a list-formatted text block."""
+    out: list[str] = []
+    for line in text.splitlines():
+        cleaned = re.sub(r"^\s*([-*•]|\d+[.)])\s+", "", line).strip()
+        if cleaned:
+            out.append(cleaned)
+    return out
+
+
+def _parse_markdown_blocks(body_text: str, title: str) -> list[Any]:
+    """Parse LLM-generated markdown into PDF block elements."""
+    blocks: list[Any] = []
+    blocks.append(Heading(title, level=1))
+    for para in re.split(r"\n{2,}", body_text):
+        stripped = para.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("## "):
+            blocks.append(Heading(stripped[3:].strip(), level=2))
+        elif stripped.startswith("### "):
+            blocks.append(Heading(stripped[4:].strip(), level=3))
+        elif _looks_like_bullets(stripped):
+            blocks.append(Bullets(_extract_bullets(stripped)))
+        else:
+            blocks.append(PdfParagraph(stripped))
+    return blocks
 
 
 # ---------------------------------------------------------------------------
@@ -306,11 +300,10 @@ def research_and_create_pdf(query: str) -> str:
     """Research a topic across the web and produce a well-formatted PDF.
 
     Use when the user asks for an answer key, exam result, question paper,
-    research summary, or any topic they want compiled into a downloadable
-    PDF.
+    research summary, or any topic they want compiled into a downloadable PDF.
 
-    Returns a string ending with ``__FILE_PATH__=/tmp/....pdf`` on
-    success, or an explanatory message when no useful data was found.
+    Returns a string ending with ``__FILE_PATH__=/tmp/....pdf`` on success,
+    or an explanatory message when no useful data was found.
     """
     if not query.strip():
         return "Please tell me what topic you want researched."
@@ -318,20 +311,20 @@ def research_and_create_pdf(query: str) -> str:
     is_answer_key = _is_answer_key_request(query)
     is_exam = _is_exam_query(query)
 
+    # Build search queries
     search_queries = [query]
     if is_answer_key:
-        search_queries.extend(
-            [
-                f"{query} official pdf download",
-                f"{query} with solutions",
-                f"{query} set wise answers",
-            ]
-        )
+        search_queries.extend([
+            f"{query} official pdf download",
+            f"{query} with solutions",
+            f"{query} set wise answers",
+        ])
     elif is_exam:
         search_queries.append(f"{query} 2026 official")
     else:
         search_queries.append(f"{query} detailed")
 
+    # Gather search results
     seen_urls: set[str] = set()
     all_results: list[dict[str, Any]] = []
     for q in search_queries[:4]:
@@ -349,6 +342,7 @@ def research_and_create_pdf(query: str) -> str:
             "Try rephrasing or being more specific."
         )
 
+    # For answer-key/exam queries, try direct PDF download first
     if is_answer_key or is_exam:
         for hit in all_results[:5]:
             url = hit.get("href") or hit.get("url") or ""
@@ -357,6 +351,7 @@ def research_and_create_pdf(query: str) -> str:
                 if _try_download_pdf(url, save_path):
                     return f"Found and downloaded the official PDF. __FILE_PATH__={save_path}"
 
+    # Scrape content from top results
     raw_contents: list[str] = []
     sources_used: list[str] = []
     for hit in all_results[:8]:
@@ -382,6 +377,7 @@ def research_and_create_pdf(query: str) -> str:
 
     combined = "\n\n".join(raw_contents)
 
+    # Compile with LLM
     if is_answer_key:
         prompt = (
             "You are an expert at extracting answer-key data from web content.\n\n"
@@ -397,7 +393,7 @@ def research_and_create_pdf(query: str) -> str:
             "respond with exactly: NO_USEFUL_DATA\n\n"
             f"Raw content:\n{combined[:12000]}"
         )
-        compiled = _gemini_compile(prompt)
+        compiled = _llm_compile(prompt)
         if not compiled or "NO_USEFUL_DATA" in compiled:
             links = "\n".join(f"- {s}" for s in sources_used[:5])
             return (
@@ -409,7 +405,6 @@ def research_and_create_pdf(query: str) -> str:
                 "Try checking the official exam-board website directly."
             )
         body_text = compiled
-        title_for_pdf = query.title()
     else:
         prompt = (
             f'Create a well-organized research summary about: "{query}"\n\n'
@@ -419,35 +414,20 @@ def research_and_create_pdf(query: str) -> str:
             "the sources. Do not make up data.\n\n"
             f"Raw content:\n{combined[:12000]}"
         )
-        compiled = _gemini_compile(prompt)
+        compiled = _llm_compile(prompt)
         body_text = compiled or "\n\n".join(raw_contents)
-        title_for_pdf = query.title()
 
-    blocks: list[Any] = []
-    blocks.append(Heading(title_for_pdf, level=1))
-    for para in re.split(r"\n{2,}", body_text):
-        stripped = para.strip()
-        if not stripped:
-            continue
-        if stripped.startswith("## "):
-            blocks.append(Heading(stripped[3:].strip(), level=2))
-        elif stripped.startswith("### "):
-            blocks.append(Heading(stripped[4:].strip(), level=3))
-        elif _looks_like_bullets(stripped):
-            blocks.append(Bullets(_extract_bullets(stripped)))
-        else:
-            blocks.append(PdfParagraph(stripped))
+    title_for_pdf = query.title()
+
+    # Build PDF
+    blocks = _parse_markdown_blocks(body_text, title_for_pdf)
     blocks.append(Rule())
     blocks.append(Heading("Sources", level=2))
     blocks.append(Bullets(sources_used))
 
     pdf_path = _safe_filename(query)
     try:
-        build_pdf(
-            blocks,
-            pdf_path,
-            meta=PdfMeta(title=title_for_pdf, subtitle=""),
-        )
+        build_pdf(blocks, pdf_path, meta=PdfMeta(title=title_for_pdf, subtitle=""))
     except PdfBuildError as exc:
         return f"Could not build the PDF: {exc}"
     return (
@@ -526,7 +506,7 @@ def generate_text_to_pdf(text: str, filename: str = "document") -> str:
 def youtube_video_to_pdf(url_or_query: str) -> str:
     """[Deprecated alias] Build a PDF from a YouTube video.
 
-    This now delegates to the new ``video_to_pdf`` tool in ``full`` mode.
+    Delegates to the ``video_to_pdf`` tool in ``full`` mode.
     Prefer ``video_to_pdf`` directly.
     """
     return run_video_to_pdf(url_or_query=url_or_query, mode="full")
@@ -542,24 +522,3 @@ def extract_youtube_to_pdf(url: str) -> str:
 def search_and_extract_youtube_to_pdf(query: str) -> str:
     """[Deprecated alias] Search YouTube and turn the result into a PDF."""
     return run_video_to_pdf(url_or_query=query, mode="full")
-
-
-# ---------------------------------------------------------------------------
-# Helpers shared with research-mode formatting
-# ---------------------------------------------------------------------------
-
-
-def _looks_like_bullets(text: str) -> bool:
-    lines = [line for line in text.splitlines() if line.strip()]
-    if len(lines) < 2:
-        return False
-    return all(re.match(r"^\s*([-*•]|\d+[.)])\s+", line) for line in lines)
-
-
-def _extract_bullets(text: str) -> list[str]:
-    out: list[str] = []
-    for line in text.splitlines():
-        cleaned = re.sub(r"^\s*([-*•]|\d+[.)])\s+", "", line).strip()
-        if cleaned:
-            out.append(cleaned)
-    return out

@@ -1,11 +1,24 @@
+"""Agent orchestration layer.
+
+Handles LLM invocation via :mod:`llm_provider`, tool calling through
+LangGraph's ReAct agent, credential auto-detection, and user-facing
+error mapping.
+"""
+
+from __future__ import annotations
+
 import logging
 import re
+from typing import Any
 
 from config import load_config, set_key
+from llm_provider import generate_text
 from tools import build_all_tools
 from utils.response_sanitizer import sanitize_response
 
 logger = logging.getLogger(__name__)
+
+# ─── System prompt ────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """
 ━━━ PDF & RESEARCH TOOL ━━━
@@ -127,24 +140,21 @@ When user pastes code:
 
 """
 
-# ─── Key auto-detection ───────────────────────────────────
+# ─── Key auto-detection ───────────────────────────────────────────────────────
 
-KEY_PATTERNS = [
-    # High-confidence provider key formats. Patterns must require the
-    # provider-specific prefix; generic base64-like patterns were removed
-    # because they caused false positives.
-    (r'\bAIzaSy[A-Za-z0-9_-]{30,50}\b', "gemini_api_key"),
-    (r'\bsk-ant-[A-Za-z0-9_-]{20,}\b', "anthropic_api_key"),
-    (r'\bghp_[A-Za-z0-9]{36,}\b', "github_token"),
-    (r'\bgithub_pat_[A-Za-z0-9_]{60,}\b', "github_token"),
-    (r'\btvly-[A-Za-z0-9_-]{20,}\b', "tavily_api_key"),
-    (r'\bgsk_[A-Za-z0-9]{40,}\b', "groq_api_key"),
-    (r'\bxai-[A-Za-z0-9]{30,}\b', "grok_api_key"),
-    (r'\bhf_[A-Za-z0-9]{30,}\b', "huggingface_api_key"),
-    (r'\bsk-or-v1-[A-Za-z0-9_-]{30,}\b', "openrouter_api_key"),
+KEY_PATTERNS: list[tuple[str, str]] = [
+    (r"\bAIzaSy[A-Za-z0-9_-]{30,50}\b", "gemini_api_key"),
+    (r"\bsk-ant-[A-Za-z0-9_-]{20,}\b", "anthropic_api_key"),
+    (r"\bghp_[A-Za-z0-9]{36,}\b", "github_token"),
+    (r"\bgithub_pat_[A-Za-z0-9_]{60,}\b", "github_token"),
+    (r"\btvly-[A-Za-z0-9_-]{20,}\b", "tavily_api_key"),
+    (r"\bgsk_[A-Za-z0-9]{40,}\b", "groq_api_key"),
+    (r"\bxai-[A-Za-z0-9]{30,}\b", "grok_api_key"),
+    (r"\bhf_[A-Za-z0-9]{30,}\b", "huggingface_api_key"),
+    (r"\bsk-or-v1-[A-Za-z0-9_-]{30,}\b", "openrouter_api_key"),
 ]
 
-KEY_FRIENDLY = {
+KEY_FRIENDLY: dict[str, str] = {
     "huggingface_api_key": "HuggingFace",
     "grok_api_key": "Grok (xAI)",
     "openrouter_api_key": "OpenRouter",
@@ -156,32 +166,107 @@ KEY_FRIENDLY = {
 }
 
 
-def detect_and_save_credentials(text: str) -> list:
-    """Detect API keys/tokens in plain text and save them. Returns list of field names saved."""
-    found = []
-    from config import load_config
+def detect_and_save_credentials(text: str) -> list[str]:
+    """Detect API keys/tokens in plain text and persist them.
+
+    Returns:
+        List of config field names that were saved.
+    """
+    found: list[str] = []
+    cfg = load_config()
+
     for pattern, field in KEY_PATTERNS:
         m = re.search(pattern, text)
-        if m:
-            if field == "gemini_api_key":
-                cfg = load_config()
-                keys = cfg.get("gemini_api_keys", [])
-                old = cfg.get("gemini_api_key", "")
-                if old and old not in keys:
-                    keys.append(old)
-                if m.group(0) not in keys:
-                    keys.append(m.group(0))
-                set_key("gemini_api_keys", keys)
-                set_key("gemini_api_key", m.group(0))
-            else:
-                set_key(field, m.group(0))
-            found.append(field)
-            logger.info(f"Auto-detected and saved {field} from message")
+        if not m:
+            continue
+
+        value = m.group(0)
+
+        if field == "gemini_api_key":
+            keys: list[str] = cfg.get("gemini_api_keys", [])
+            old = cfg.get("gemini_api_key", "")
+            if old and old not in keys:
+                keys.append(old)
+            if value not in keys:
+                keys.append(value)
+            set_key("gemini_api_keys", keys)
+            set_key("gemini_api_key", value)
+        else:
+            set_key(field, value)
+
+        found.append(field)
+        logger.info("Auto-detected and saved %s from message", field)
+
     return found
 
 
-# Gemini models — actual names verified against Google AI Studio API
-GEMINI_MODELS = [
+# ─── Error classification helpers ─────────────────────────────────────────────
+
+_RATE_LIMIT_KEYWORDS = frozenset(
+    ["quota", "rate limit", "resource_exhausted", "429", "too many requests", "ratelimitexceeded"]
+)
+_AUTH_KEYWORDS = frozenset(
+    ["api key", "invalid key", "authentication", "401", "403", "api_key_invalid", "permission denied"]
+)
+_SKIP_KEYWORDS = frozenset(
+    [
+        "404", "notfound", "not found", "not supported", "deprecated", "does not exist",
+        "503", "unavailable", "overloaded", "high demand", "service unavailable",
+        "502", "500", "internal server error",
+    ]
+)
+
+
+def _is_rate_limit_error(error_str: str) -> bool:
+    lower = error_str.lower()
+    return any(k in lower for k in _RATE_LIMIT_KEYWORDS)
+
+
+def _is_auth_error(error_str: str) -> bool:
+    lower = error_str.lower()
+    return any(k in lower for k in _AUTH_KEYWORDS)
+
+
+def _is_skip_error(error_str: str) -> bool:
+    lower = error_str.lower()
+    return any(k in lower for k in _SKIP_KEYWORDS) or _is_rate_limit_error(error_str)
+
+
+# ─── Content extraction ───────────────────────────────────────────────────────
+
+
+def _extract_text(content: Any) -> str:
+    """Normalize LangChain message content to a plain string."""
+    if isinstance(content, str):
+        # Handle stringified list-of-dicts from some providers.
+        if content.strip().startswith("[{") and "'text':" in content:
+            try:
+                import ast
+                parsed = ast.literal_eval(content)
+                return "\n".join(
+                    p["text"] for p in parsed if isinstance(p, dict) and "text" in p
+                )
+            except Exception:
+                pass
+        return content
+
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and "text" in block:
+                parts.append(block["text"])
+            elif hasattr(block, "text"):
+                parts.append(block.text)
+        return "\n".join(p for p in parts if p).strip()
+
+    return str(content)
+
+
+# ─── Gemini model cascade ─────────────────────────────────────────────────────
+
+GEMINI_MODELS: list[str] = [
     "gemini-flash-latest",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
@@ -189,72 +274,38 @@ GEMINI_MODELS = [
 ]
 
 
-def _is_rate_limit_error(error_str: str) -> bool:
-    keywords = ["quota", "rate limit", "resource_exhausted", "429", "too many requests", "ratelimitexceeded"]
-    return any(k in error_str.lower() for k in keywords)
+# ─── LLM invocation with fallback ────────────────────────────────────────────
 
 
-def _is_auth_error(error_str: str) -> bool:
-    keywords = ["api key", "invalid key", "authentication", "401", "403", "api_key_invalid", "permission denied"]
-    return any(k in error_str.lower() for k in keywords)
+def _invoke_with_retry(user_message: str, chat_history: list[dict[str, str]]) -> str:
+    """Run the ReAct agent, cycling through Gemini keys/models on failure.
 
+    Uses :func:`llm_provider.generate_text` indirectly through LangGraph's
+    ``create_react_agent`` for tool orchestration, but falls back across
+    models and keys on transient errors.
 
-def _extract_text(content) -> str:
-    """Normalize LangChain content — may be a str or a list of content blocks."""
-    if isinstance(content, str):
-        if content.strip().startswith("[{") and "'text':" in content:
-            try:
-                import ast
-                parsed = ast.literal_eval(content)
-                parts = []
-                for p in parsed:
-                    if isinstance(p, dict) and "text" in p:
-                        parts.append(p["text"])
-                return "\n".join(parts)
-            except Exception:
-                pass
-        return content
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, dict):
-                if "text" in block:
-                    parts.append(block["text"])
-            elif hasattr(block, "text"):
-                parts.append(block.text)
-        return "\n".join(p for p in parts if p).strip()
-    return str(content)
-
-
-def _is_skip_error(error_str: str) -> bool:
-    """Errors that mean 'try the next model'."""
-    keywords = [
-        "404", "notfound", "not found", "not supported", "deprecated", "does not exist",
-        "503", "unavailable", "overloaded", "high demand", "service unavailable",
-        "502", "500", "internal server error",
-    ]
-    return any(k in error_str.lower() for k in keywords) or _is_rate_limit_error(error_str)
-
-
-# ─── LLM builder ─────────────────────────────────────────
-
-def _invoke_with_retry(user_message: str, chat_history: list) -> str:
-    config = load_config()
+    Raises:
+        Exception("rate_limit_all"): Every Gemini key is rate-limited.
+        Exception("no_llm"): No usable LLM configuration found.
+    """
+    from langchain_google_genai import ChatGoogleGenerativeAI
     from langgraph.prebuilt import create_react_agent
+
+    config = load_config()
     tools = build_all_tools()
     messages = chat_history + [{"role": "user", "content": user_message}]
 
-    gemini_keys = config.get("gemini_api_keys", [])
-    if config.get("gemini_api_key") and config.get("gemini_api_key") not in gemini_keys:
-        gemini_keys.insert(0, config.get("gemini_api_key"))
+    # Collect all available Gemini keys.
+    gemini_keys: list[str] = list(config.get("gemini_api_keys", []))
+    primary = config.get("gemini_api_key", "")
+    if primary and primary not in gemini_keys:
+        gemini_keys.insert(0, primary)
 
-    last_error_gemini = ""
+    last_error = ""
+
     if gemini_keys:
-        from langchain_google_genai import ChatGoogleGenerativeAI
         for key in gemini_keys:
-            for _i, model in enumerate(GEMINI_MODELS):
+            for model in GEMINI_MODELS:
                 try:
                     llm = ChatGoogleGenerativeAI(
                         model=model,
@@ -265,62 +316,95 @@ def _invoke_with_retry(user_message: str, chat_history: list) -> str:
                     )
                     agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
                     result = agent.invoke({"messages": messages})
+
                     final_text = _extract_text(result["messages"][-1].content)
-                    # Extract __FILE_PATH__ from ANY message in the chain (tool results)
-                    file_path_tag = None
+
+                    # Extract __FILE_PATH__ from any message in the chain.
+                    file_path_tag: str | None = None
                     for msg in result["messages"]:
                         raw = _extract_text(msg.content) if hasattr(msg, "content") else ""
-                        m = re.search(r"__FILE_PATH__=([^\s]+)", raw)
-                        if m:
-                            file_path_tag = m.group(0)
+                        match = re.search(r"__FILE_PATH__=\S+", raw)
+                        if match:
+                            file_path_tag = match.group(0)
                             break
-                    # Sanitise BEFORE appending the file-path tag so we don't
-                    # accidentally drop "Here's your PDF" once it becomes truthful.
+
+                    # Sanitize before appending file tag.
                     final_text = sanitize_response(final_text)
+
                     if file_path_tag and "__FILE_PATH__" not in final_text:
-                        logger.info(f"Appending file tag from tool message: {file_path_tag}")
-                        final_text = (final_text + " " + file_path_tag).strip()
+                        logger.info("Appending file tag from tool message: %s", file_path_tag)
+                        final_text = f"{final_text} {file_path_tag}".strip()
+
                     return final_text
+
                 except Exception as e:
                     error_str = str(e)
-                    last_error_gemini = error_str
+                    last_error = error_str
                     if _is_auth_error(error_str):
-                        break # Key invalid, try next key
+                        break  # Key invalid — try next key.
                     if _is_skip_error(error_str):
-                        if _is_rate_limit_error(error_str):
-                            continue # Rate limited, try next model
-                        continue # Next model
+                        continue  # Try next model.
+                    # Unknown error — still try next model.
+                    logger.warning("Unexpected LLM error on %s: %s", model, error_str[:200])
+                    continue
 
-        if _is_rate_limit_error(last_error_gemini):
+        if _is_rate_limit_error(last_error):
             raise Exception("rate_limit_all")
 
     raise Exception("no_llm")
 
 
-# ─── Agent invocation ─────────────────────────────────────
+# ─── Public entry point ───────────────────────────────────────────────────────
 
-def ask_agent(user_message: str, chat_history: list = None, stats=None) -> str:
-    """Core function called by the bot handler. Returns the agent's response."""
 
-    # Auto-detect and save any credentials pasted in the message
+def ask_agent(
+    user_message: str,
+    chat_history: list[dict[str, str]] | None = None,
+    stats: Any = None,
+) -> str:
+    """Process a user message and return the agent's response.
+
+    This is the main entry point called by the Telegram handler. It:
+    1. Auto-detects and saves any API keys in the message.
+    2. Validates that at least one LLM provider is configured.
+    3. Invokes the LLM with tool-calling support.
+    4. Maps errors to user-friendly messages.
+
+    Args:
+        user_message: The raw text from the user.
+        chat_history: Prior conversation turns as role/content dicts.
+        stats: Optional stats object (unused, kept for interface compat).
+
+    Returns:
+        The agent's text response (may include ``__FILE_PATH__=...`` tag).
+    """
     if chat_history is None:
         chat_history = []
+
+    # Auto-detect and save credentials.
     found_keys = detect_and_save_credentials(user_message)
 
-    # Quick confirmation for pure key pastes (message is just a key)
+    # Quick confirmation for pure key pastes.
     if found_keys and len(user_message.strip()) < 120:
         names = " + ".join(KEY_FRIENDLY.get(k, k) for k in found_keys)
-        if "github_token" in found_keys and not any(k in found_keys for k in ("gemini_api_key", "anthropic_api_key")):
-            return f"✅ {names} token connected! Now I can create repos, push code, manage issues — everything. What would you like to do?"
-        elif "gemini_api_key" in found_keys or "anthropic_api_key" in found_keys:
+        if "github_token" in found_keys and not any(
+            k in found_keys for k in ("gemini_api_key", "anthropic_api_key")
+        ):
+            return (
+                f"✅ {names} token connected! Now I can create repos, push code, "
+                "manage issues — everything. What would you like to do?"
+            )
+        if "gemini_api_key" in found_keys or "anthropic_api_key" in found_keys:
             return f"✅ {names} key saved! I'm ready — ask me anything."
-        else:
-            return f"✅ {names} saved!"
+        return f"✅ {names} saved!"
 
-    # Check an LLM is available
+    # Ensure at least one LLM provider is configured.
     config = load_config()
-    has_llm = config.get("gemini_api_key") or config.get("gemini_api_keys") or config.get("anthropic_api_key") or config.get("groq_api_key") or config.get("openrouter_api_key") or config.get("grok_api_key") or config.get("huggingface_api_key")
-    if not has_llm:
+    llm_keys = (
+        "gemini_api_key", "gemini_api_keys", "anthropic_api_key",
+        "groq_api_key", "openrouter_api_key", "grok_api_key", "huggingface_api_key",
+    )
+    if not any(config.get(k) for k in llm_keys):
         return (
             "I need an API key to get started! 🔑\n\n"
             "**Free option — Gemini Flash:**\n"
@@ -332,32 +416,39 @@ def ask_agent(user_message: str, chat_history: list = None, stats=None) -> str:
 
     try:
         return _invoke_with_retry(user_message, chat_history)
-
     except Exception as e:
-        error_str = str(e)
-        logger.error(f"Agent error: {error_str}", exc_info=True)
+        return _format_error_response(str(e))
 
-        if "rate_limit_all" in error_str or _is_rate_limit_error(error_str):
-            return (
-                "⏳ The AI API is temporarily rate-limited (this is Google/Anthropic's limit, not the bot).\n\n"
-                "Wait 30–60 seconds and try again. "
-                "Free Gemini keys allow ~15 requests/minute."
-            )
-        elif "auth_error" in error_str or _is_auth_error(error_str):
-            return (
-                "❌ Your API key was rejected. It may be invalid or expired.\n\n"
-                "Paste a fresh key here:\n"
-                "• Gemini: aistudio.google.com/app/apikey → starts with `AIzaSy...`\n"
-                "• Anthropic: console.anthropic.com → starts with `sk-ant-...`\n"
-                "• Groq: console.groq.com → starts with `gsk_...`\n• Grok: console.x.ai → starts with `xai-...`\n• HuggingFace: huggingface.co/settings/tokens → starts with `hf_...`\n"
-                "• Grok (xAI): console.x.ai → starts with `xai-`\n"
-                "• HuggingFace: huggingface.co/settings/tokens → starts with `hf_`\n"
-                "• OpenRouter: openrouter.ai/keys → starts with `sk-or-v1-...`"
-            )
-        elif "no_llm" in error_str:
-            config = load_config()
-            if config.get("gemini_api_key") or config.get("gemini_api_keys") or config.get("anthropic_api_key") or config.get("groq_api_key") or config.get("openrouter_api_key") or config.get("grok_api_key") or config.get("huggingface_api_key"):
-                return "⚠️ All AI models failed to respond. This may be a temporary outage — try again in a moment."
-            return "No API key configured. Paste a Gemini (`AIzaSy...`) or Anthropic (`sk-ant-...`) key in chat."
-        else:
-            return f"❌ Something went wrong: {error_str[:200]}\n\nTry again in a moment."
+
+def _format_error_response(error_str: str) -> str:
+    """Map internal error strings to user-friendly messages."""
+    logger.error("Agent error: %s", error_str[:300], exc_info=True)
+
+    if "rate_limit_all" in error_str or _is_rate_limit_error(error_str):
+        return (
+            "⏳ The AI API is temporarily rate-limited (this is Google/Anthropic's limit, not the bot).\n\n"
+            "Wait 30–60 seconds and try again. "
+            "Free Gemini keys allow ~15 requests/minute."
+        )
+
+    if "auth_error" in error_str or _is_auth_error(error_str):
+        return (
+            "❌ Your API key was rejected. It may be invalid or expired.\n\n"
+            "Paste a fresh key here:\n"
+            "• Gemini: aistudio.google.com/app/apikey → starts with `AIzaSy...`\n"
+            "• Anthropic: console.anthropic.com → starts with `sk-ant-...`\n"
+            "• Groq: console.groq.com → starts with `gsk_...`\n"
+            "• Grok (xAI): console.x.ai → starts with `xai-...`\n"
+            "• HuggingFace: huggingface.co/settings/tokens → starts with `hf_...`\n"
+            "• OpenRouter: openrouter.ai/keys → starts with `sk-or-v1-...`"
+        )
+
+    if "no_llm" in error_str:
+        config = load_config()
+        if any(config.get(k) for k in ("gemini_api_key", "gemini_api_keys", "anthropic_api_key",
+                                        "groq_api_key", "openrouter_api_key", "grok_api_key",
+                                        "huggingface_api_key")):
+            return "⚠️ All AI models failed to respond. This may be a temporary outage — try again in a moment."
+        return "No API key configured. Paste a Gemini (`AIzaSy...`) or Anthropic (`sk-ant-...`) key in chat."
+
+    return f"❌ Something went wrong: {error_str[:200]}\n\nTry again in a moment."

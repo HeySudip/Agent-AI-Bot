@@ -22,22 +22,20 @@ class SSRFBlockedError(ValueError):
 
 
 _ALLOWED_SCHEMES: Final[frozenset[str]] = frozenset({"http", "https"})
-_BLOCKED_HOSTNAMES: Final[frozenset[str]] = frozenset(
-    {
-        "localhost",
-        "ip6-localhost",
-        "ip6-loopback",
-        "broadcasthost",
-        # Common cloud metadata service hostnames
-        "metadata.google.internal",
-        "metadata",
-        "instance-data",
-    }
-)
+_BLOCKED_HOSTNAMES: Final[frozenset[str]] = frozenset({
+    "localhost",
+    "ip6-localhost",
+    "ip6-loopback",
+    "broadcasthost",
+    # Common cloud metadata service hostnames
+    "metadata.google.internal",
+    "metadata",
+    "instance-data",
+})
 
 
 def is_url_safe(url: str) -> tuple[bool, str | None]:
-    """Return ``(safe, reason)``. ``reason`` is None when safe."""
+    """Return ``(safe, reason)``. *reason* is None when safe."""
     try:
         assert_url_is_safe(url)
     except SSRFBlockedError as exc:
@@ -46,7 +44,7 @@ def is_url_safe(url: str) -> tuple[bool, str | None]:
 
 
 def assert_url_is_safe(url: str) -> None:
-    """Validate ``url``. Raise :class:`SSRFBlockedError` on any policy failure.
+    """Validate *url*. Raise :class:`SSRFBlockedError` on any policy failure.
 
     Performs DNS resolution and rejects URLs that resolve to disallowed
     address ranges. DNS resolution may block; callers should run this in a
@@ -69,31 +67,35 @@ def assert_url_is_safe(url: str) -> None:
     if hostname in _BLOCKED_HOSTNAMES:
         raise SSRFBlockedError(f"Hostname {hostname!r} is blocked.")
 
-    # AWS-style metadata endpoint check on the hostname itself, before DNS.
+    # AWS-style metadata endpoint check before DNS resolution.
     if hostname == "169.254.169.254":
         raise SSRFBlockedError("Cloud metadata endpoint is blocked.")
 
     try:
         infos = socket.getaddrinfo(hostname, None)
     except socket.gaierror as exc:
-        raise SSRFBlockedError(f"DNS resolution failed for {hostname!r}: {exc}") from exc
+        raise SSRFBlockedError(
+            f"DNS resolution failed for {hostname!r}: {exc}"
+        ) from exc
 
     if not infos:
         raise SSRFBlockedError(f"No addresses resolved for {hostname!r}.")
 
     for info in infos:
-        sockaddr = info[4]
-        ip_str = sockaddr[0]
+        ip_str: str = info[4][0]
         try:
             ip = ipaddress.ip_address(ip_str)
         except ValueError as exc:
-            raise SSRFBlockedError(f"Could not parse address {ip_str!r}.") from exc
+            raise SSRFBlockedError(
+                f"Could not parse address {ip_str!r}."
+            ) from exc
         _assert_ip_is_safe(ip, hostname)
 
 
 def _assert_ip_is_safe(
     ip: ipaddress.IPv4Address | ipaddress.IPv6Address, hostname: str
 ) -> None:
+    """Raise :class:`SSRFBlockedError` if *ip* falls in a blocked range."""
     if ip.is_loopback:
         raise SSRFBlockedError(f"{hostname!r} resolves to loopback ({ip}).")
     if ip.is_private:

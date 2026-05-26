@@ -18,7 +18,7 @@ __all__ = [
     "ToolNotFoundError",
     "ToolValidationError",
     "ToolExecutionError",
-    "MemoryError",
+    "MemoryStoreError",
     "SafetyError",
     "RateLimitedError",
     "ContentBlockedError",
@@ -27,6 +27,10 @@ __all__ = [
 
 class AgentError(Exception):
     """Base class for every error raised by the agent itself."""
+
+    def __init__(self, message: str = "", *, details: str = "") -> None:
+        self.details = details
+        super().__init__(message)
 
 
 class ConfigError(AgentError):
@@ -69,7 +73,7 @@ class ToolExecutionError(ToolError):
     """Tool raised while executing."""
 
 
-class MemoryError(AgentError):  # noqa: N818 — intentional name shadowing builtin
+class MemoryStoreError(AgentError):
     """Raised when the memory subsystem cannot be reached."""
 
 

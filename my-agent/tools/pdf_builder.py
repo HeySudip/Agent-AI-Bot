@@ -1,13 +1,12 @@
 """Shared PDF builder used by every tool that produces a downloadable PDF.
 
-The builder accepts a structured list of *blocks* and renders them with
-ReportLab. Blocks can be headings, paragraphs, bullet lists, key/value
-tables, code, horizontal rules, page breaks, or images. Keeping the
-input data structured (rather than letting each tool render its own
-ReportLab story) means we get consistent typography, page numbers, and
-metadata across every PDF the bot produces.
+Accepts a structured list of :class:`PdfBlock` instances and renders them
+with ReportLab. Blocks can be headings, paragraphs, bullet lists, key/value
+tables, code, horizontal rules, page breaks, or images. Keeping the input
+data structured means consistent typography, page numbers, and metadata
+across every PDF the bot produces.
 
-The function ``build_pdf`` is the only public entry point.
+The function :func:`build_pdf` is the only public entry point.
 """
 
 from __future__ import annotations
@@ -32,53 +31,67 @@ __all__ = [
     "Image",
     "Rule",
     "PageBreak",
+    "PdfMeta",
     "build_pdf",
 ]
+
+
+# ─── Exceptions ───────────────────────────────────────────────────────────────
 
 
 class PdfBuildError(RuntimeError):
     """Raised when the PDF backend (ReportLab) is unavailable or fails."""
 
 
-# --- Block types ------------------------------------------------------------
+# ─── Block types ──────────────────────────────────────────────────────────────
 
 
 @dataclass
 class PdfBlock:
-    """Marker base class so static type checkers can spot mismatches."""
+    """Marker base class for all renderable PDF blocks."""
 
 
 @dataclass
 class Heading(PdfBlock):
+    """Section heading (level 1–3)."""
+
     text: str
-    level: int = 2  # 1 = h1, 2 = h2, 3 = h3
+    level: int = 2
 
 
 @dataclass
 class Paragraph(PdfBlock):
+    """Body text paragraph. Double newlines are split into separate paragraphs."""
+
     text: str
 
 
 @dataclass
 class Bullets(PdfBlock):
+    """Bulleted list of items."""
+
     items: list[str]
 
 
 @dataclass
 class KeyValue(PdfBlock):
-    """Two-column "label: value" rows. Useful for video metadata, etc."""
+    """Two-column label/value table (e.g. video metadata)."""
 
     rows: list[tuple[str, str]]
 
 
 @dataclass
 class Code(PdfBlock):
+    """Monospaced code block."""
+
     text: str
     language: str = ""
 
 
 @dataclass
 class Image(PdfBlock):
+    """Embedded image with optional caption."""
+
     path: str
     caption: str = ""
     max_width_cm: float = 14.0
@@ -87,23 +100,28 @@ class Image(PdfBlock):
 
 @dataclass
 class Rule(PdfBlock):
-    pass
+    """Horizontal rule separator."""
 
 
 @dataclass
 class PageBreak(PdfBlock):
-    pass
+    """Force a page break."""
 
 
-# --- Builder ---------------------------------------------------------------
+# ─── Document metadata ────────────────────────────────────────────────────────
 
 
 @dataclass
 class PdfMeta:
+    """Title block and document-level metadata."""
+
     title: str
     subtitle: str = ""
     author: str = "Agent AI Bot"
     extra_meta_lines: list[str] = field(default_factory=list)
+
+
+# ─── Builder ──────────────────────────────────────────────────────────────────
 
 
 def build_pdf(
@@ -112,7 +130,7 @@ def build_pdf(
     *,
     meta: PdfMeta,
 ) -> str:
-    """Render ``blocks`` to a PDF file and return the resolved path.
+    """Render *blocks* to a PDF file and return the resolved path.
 
     Args:
         blocks: Ordered iterable of :class:`PdfBlock` instances.
@@ -140,16 +158,10 @@ def build_pdf(
             Table,
             TableStyle,
         )
-        from reportlab.platypus import (
-            Image as RLImage,
-        )
-        from reportlab.platypus import (
-            PageBreak as RLPageBreak,
-        )
-        from reportlab.platypus import (
-            Paragraph as RLParagraph,
-        )
-    except ImportError as exc:  # pragma: no cover - depends on env
+        from reportlab.platypus import Image as RLImage
+        from reportlab.platypus import PageBreak as RLPageBreak
+        from reportlab.platypus import Paragraph as RLParagraph
+    except ImportError as exc:
         raise PdfBuildError(
             "reportlab is not installed. Install it with: pip install reportlab"
         ) from exc
@@ -157,84 +169,60 @@ def build_pdf(
     out = Path(output_path).expanduser().resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
 
+    # ── Styles ────────────────────────────────────────────────────────────
     styles = getSampleStyleSheet()
+
     title_style = ParagraphStyle(
-        "DocTitle",
-        parent=styles["Title"],
-        fontSize=20,
-        textColor=colors.HexColor("#1a1a2e"),
-        spaceAfter=4,
-        alignment=TA_CENTER,
+        "DocTitle", parent=styles["Title"],
+        fontSize=20, textColor=colors.HexColor("#1a1a2e"),
+        spaceAfter=4, alignment=TA_CENTER,
     )
     subtitle_style = ParagraphStyle(
-        "DocSubtitle",
-        parent=styles["Normal"],
-        fontSize=11,
-        textColor=colors.HexColor("#444444"),
-        alignment=TA_CENTER,
-        spaceAfter=10,
+        "DocSubtitle", parent=styles["Normal"],
+        fontSize=11, textColor=colors.HexColor("#444444"),
+        alignment=TA_CENTER, spaceAfter=10,
     )
     meta_style = ParagraphStyle(
-        "DocMeta",
-        parent=styles["Normal"],
-        fontSize=9,
-        textColor=colors.HexColor("#666666"),
-        alignment=TA_CENTER,
-        spaceAfter=14,
+        "DocMeta", parent=styles["Normal"],
+        fontSize=9, textColor=colors.HexColor("#666666"),
+        alignment=TA_CENTER, spaceAfter=14,
     )
     h1 = ParagraphStyle(
-        "H1",
-        parent=styles["Heading1"],
-        fontSize=15,
-        textColor=colors.HexColor("#16213e"),
-        spaceBefore=18,
-        spaceAfter=6,
+        "H1", parent=styles["Heading1"],
+        fontSize=15, textColor=colors.HexColor("#16213e"),
+        spaceBefore=18, spaceAfter=6,
     )
     h2 = ParagraphStyle(
-        "H2",
-        parent=styles["Heading2"],
-        fontSize=13,
-        textColor=colors.HexColor("#1f3a5c"),
-        spaceBefore=14,
-        spaceAfter=4,
+        "H2", parent=styles["Heading2"],
+        fontSize=13, textColor=colors.HexColor("#1f3a5c"),
+        spaceBefore=14, spaceAfter=4,
     )
     h3 = ParagraphStyle(
-        "H3",
-        parent=styles["Heading3"],
-        fontSize=11,
-        textColor=colors.HexColor("#2a4d7a"),
-        spaceBefore=10,
-        spaceAfter=3,
+        "H3", parent=styles["Heading3"],
+        fontSize=11, textColor=colors.HexColor("#2a4d7a"),
+        spaceBefore=10, spaceAfter=3,
     )
     body = ParagraphStyle(
-        "Body",
-        parent=styles["Normal"],
-        fontSize=10,
-        leading=15,
-        spaceAfter=4,
+        "Body", parent=styles["Normal"],
+        fontSize=10, leading=15, spaceAfter=4,
         textColor=colors.HexColor("#2d2d2d"),
     )
     code_style = ParagraphStyle(
-        "Code",
-        parent=styles["Code"],
-        fontSize=8.5,
-        leading=11,
+        "Code", parent=styles["Code"],
+        fontSize=8.5, leading=11,
         textColor=colors.HexColor("#1a1a1a"),
         backColor=colors.HexColor("#f5f5f5"),
-        borderPadding=4,
-        leftIndent=4,
+        borderPadding=4, leftIndent=4,
     )
     caption_style = ParagraphStyle(
-        "Caption",
-        parent=styles["Italic"],
-        fontSize=9,
-        textColor=colors.HexColor("#555555"),
-        alignment=TA_CENTER,
-        spaceAfter=8,
+        "Caption", parent=styles["Italic"],
+        fontSize=9, textColor=colors.HexColor("#555555"),
+        alignment=TA_CENTER, spaceAfter=8,
     )
 
-    heading_styles = {1: h1, 2: h2, 3: h3}
+    heading_styles: dict[int, ParagraphStyle] = {1: h1, 2: h2, 3: h3}
 
+    # ── Title block ───────────────────────────────────────────────────────
     story: list[Any] = []
     story.append(RLParagraph(_escape(meta.title), title_style))
     if meta.subtitle:
@@ -246,6 +234,7 @@ def build_pdf(
     story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#cccccc")))
     story.append(Spacer(1, 10))
 
+    # ── Render blocks ─────────────────────────────────────────────────────
     for block in blocks:
         if isinstance(block, Heading):
             level = max(1, min(3, block.level))
@@ -259,8 +248,7 @@ def build_pdf(
         elif isinstance(block, Bullets):
             items = [
                 ListItem(RLParagraph(_escape(item), body), leftIndent=10)
-                for item in block.items
-                if item.strip()
+                for item in block.items if item.strip()
             ]
             if items:
                 story.append(ListFlowable(items, bulletType="bullet", leftIndent=14))
@@ -269,27 +257,16 @@ def build_pdf(
         elif isinstance(block, KeyValue):
             data = [
                 [RLParagraph(f"<b>{_escape(k)}</b>", body), RLParagraph(_escape(v), body)]
-                for k, v in block.rows
-                if k or v
+                for k, v in block.rows if k or v
             ]
             if data:
                 table = Table(data, colWidths=[4 * cm, 13 * cm])
-                table.setStyle(
-                    TableStyle(
-                        [
-                            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                            ("TOPPADDING", (0, 0), (-1, -1), 4),
-                            (
-                                "LINEBELOW",
-                                (0, 0),
-                                (-1, -1),
-                                0.25,
-                                colors.HexColor("#e5e5e5"),
-                            ),
-                        ]
-                    )
-                )
+                table.setStyle(TableStyle([
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("LINEBELOW", (0, 0), (-1, -1), 0.25, colors.HexColor("#e5e5e5")),
+                ]))
                 story.append(table)
                 story.append(Spacer(1, 6))
 
@@ -313,17 +290,13 @@ def build_pdf(
                     story.append(Spacer(1, 4))
             except Exception as exc:
                 logger.warning("Skipping unreadable image %s: %s", block.path, exc)
-                story.append(
-                    RLParagraph(
-                        _escape(f"[image unavailable: {block.caption or block.path}]"),
-                        caption_style,
-                    )
-                )
+                story.append(RLParagraph(
+                    _escape(f"[image unavailable: {block.caption or block.path}]"),
+                    caption_style,
+                ))
 
         elif isinstance(block, Rule):
-            story.append(
-                HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#dddddd"))
-            )
+            story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#dddddd")))
             story.append(Spacer(1, 4))
 
         elif isinstance(block, PageBreak):
@@ -332,6 +305,7 @@ def build_pdf(
         else:
             logger.debug("Ignoring unknown block type: %s", type(block).__name__)
 
+    # ── Build document ────────────────────────────────────────────────────
     doc = SimpleDocTemplate(
         str(out),
         pagesize=A4,
@@ -349,6 +323,9 @@ def build_pdf(
         raise PdfBuildError(f"PDF render failed: {exc}") from exc
 
     return str(out)
+
+
+# ─── Private helpers ──────────────────────────────────────────────────────────
 
 
 def _page_footer(canvas: Any, doc: Any) -> None:
@@ -372,7 +349,7 @@ def _escape(text: str) -> str:
 
 
 def _split_paragraphs(text: str) -> list[str]:
-    """Split a body string on blank lines so paragraphs render cleanly."""
+    """Split body text on blank lines so paragraphs render as separate flowables."""
     if not text:
         return []
     return [p.strip() for p in text.split("\n\n") if p.strip()]

@@ -1,27 +1,47 @@
-import time
+"""Telegram bot command handlers (/start, /help, /status, admin commands, etc.)."""
+
+from __future__ import annotations
+
+import io
 import logging
-import os
+import time
 from datetime import datetime
+from typing import Any
+
 from telegram import Update
-from telegram.ext import ContextTypes, CommandHandler
+from telegram.ext import CommandHandler, ContextTypes
+
 from config import (
-    load_config, set_key, is_admin, is_allowed,
-    add_admin, remove_admin, add_allowed_user, remove_allowed_user,
-    get_llm_status, mask_key,
+    add_admin,
+    add_allowed_user,
+    get_llm_status,
+    is_admin,
+    is_allowed,
+    load_config,
+    mask_key,
+    remove_admin,
+    remove_allowed_user,
 )
-from memory.store import (
-    ConversationStore, UserStats, get_all_users, get_global_stats
-)
-from utils.formatting import format_stats, split_message, format_uptime
+from memory.store import ConversationStore, UserStats, get_all_users, get_global_stats
+from utils.formatting import format_stats, format_uptime, split_message
 from utils.rate_limiter import global_rate_limiter
+
+__all__ = ["register_command_handlers"]
 
 logger = logging.getLogger(__name__)
 
-BOT_START_TIME = time.time()
+BOT_START_TIME: float = time.time()
 
 
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ─── Public Commands ───────────────────────────────────────────────────────────
+
+
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /start — greet the user and show setup instructions."""
     user = update.effective_user
+    if not user or not update.message:
+        return
+
     stats = UserStats(user.id)
     stats.upsert(
         username=user.username or "",
@@ -32,7 +52,6 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     config = load_config()
     has_llm = config.get("gemini_api_key") or config.get("anthropic_api_key")
     has_gh = config.get("github_token")
-
     name = user.first_name or "there"
 
     if not has_llm:
@@ -48,7 +67,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Just paste the key directly in chat — no commands needed."
         )
     else:
-        gh_line = "✅ GitHub connected" if has_gh else "🐙 Paste your GitHub token (`ghp_...`) to connect"
+        gh_line = (
+            "✅ GitHub connected"
+            if has_gh
+            else "🐙 Paste your GitHub token (`ghp_...`) to connect"
+        )
         msg = (
             f"👋 Hey {name}! Ready to go.\n\n"
             f"{gh_line}\n\n"
@@ -64,7 +87,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
-async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /help — list available commands."""
+    if not update.message:
+        return
     msg = (
         "📚 *Commands*\n\n"
         "/start — Welcome message\n"
@@ -88,17 +114,22 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
-async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /status — show configured keys and uptime."""
+    if not update.message:
+        return
     config = load_config()
-    status = get_llm_status()
 
     gemini = config.get("gemini_api_key", "")
     anthropic = config.get("anthropic_api_key", "")
     github = config.get("github_token", "")
     tavily = config.get("tavily_api_key", "")
 
-    active_brain = "Gemini Flash 🟢" if gemini else ("Claude 🟢" if anthropic else "❌ No LLM key set")
-
+    active_brain = (
+        "Gemini Flash 🟢"
+        if gemini
+        else ("Claude 🟢" if anthropic else "❌ No LLM key set")
+    )
     uptime = format_uptime(time.time() - BOT_START_TIME)
 
     msg = (
@@ -115,7 +146,10 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
-async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /clear — wipe the user's conversation history."""
+    if not update.effective_user or not update.message:
+        return
     user_id = update.effective_user.id
     store = ConversationStore(user_id)
     count = store.count()
@@ -125,7 +159,10 @@ async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /history — export conversation as text or file."""
+    if not update.effective_user or not update.message:
+        return
     user_id = update.effective_user.id
     store = ConversationStore(user_id)
     history = store.get_history_with_timestamps(limit=100)
@@ -134,24 +171,23 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No conversation history yet.")
         return
 
-    # Build text export
-    lines = [f"=== Conversation History ===\n", f"Exported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"]
+    lines = [
+        "=== Conversation History ===\n",
+        f"Exported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n",
+    ]
     for msg in history:
         prefix = "You" if msg["role"] == "user" else "Assistant"
         lines.append(f"[{msg['time_str']}] {prefix}:\n{msg['content']}\n\n{'─' * 40}\n")
 
     text = "".join(lines)
 
-    # Send as file if long
     if len(text) > 3000:
-        import io
-        file_bytes = text.encode("utf-8")
-        file_obj = io.BytesIO(file_bytes)
+        file_obj = io.BytesIO(text.encode("utf-8"))
         file_obj.name = f"history_{user_id}.txt"
         await update.message.reply_document(
             document=file_obj,
             filename=f"conversation_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
-            caption=f"📜 Your last {len(history)} messages"
+            caption=f"📜 Your last {len(history)} messages",
         )
     else:
         chunks = split_message(f"📜 *Conversation History:*\n\n{text}")
@@ -159,7 +195,10 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(chunk, parse_mode="Markdown")
 
 
-async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /stats — show the user's usage statistics."""
+    if not update.effective_user or not update.message:
+        return
     user_id = update.effective_user.id
     user_stats = UserStats(user_id)
     data = user_stats.get()
@@ -170,92 +209,120 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
-# ─── Admin Commands ────────────────────────────────────────
+# ─── Admin Commands ────────────────────────────────────────────────────────────
 
 
-async def cmd_admin_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
+def _require_admin(update: Update) -> bool:
+    """Return True if the user is an admin; send denial otherwise."""
+    return update.effective_user is not None and is_admin(update.effective_user.id)
+
+
+def _parse_user_id_arg(context: ContextTypes.DEFAULT_TYPE) -> int | None:
+    """Extract a user ID from the first command argument, or None."""
+    if not context.args:
+        return None
+    try:
+        return int(context.args[0])
+    except ValueError:
+        return None
+
+
+async def cmd_admin_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /adminadd <user_id>."""
+    if not update.message:
+        return
+    if not _require_admin(update):
         await update.message.reply_text("❌ Admin only.")
         return
-    if not context.args:
+    uid = _parse_user_id_arg(context)
+    if uid is None:
         await update.message.reply_text("Usage: /adminadd <user_id>")
         return
-    try:
-        uid = int(context.args[0])
-        add_admin(uid)
-        await update.message.reply_text(f"✅ User {uid} added as admin.")
-    except ValueError:
-        await update.message.reply_text("Invalid user ID.")
+    add_admin(uid)
+    await update.message.reply_text(f"✅ User {uid} added as admin.")
 
 
-async def cmd_admin_remove(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
+async def cmd_admin_remove(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle /adminremove <user_id>."""
+    if not update.message:
+        return
+    if not _require_admin(update):
         await update.message.reply_text("❌ Admin only.")
         return
-    if not context.args:
+    uid = _parse_user_id_arg(context)
+    if uid is None:
         await update.message.reply_text("Usage: /adminremove <user_id>")
         return
-    try:
-        uid = int(context.args[0])
-        remove_admin(uid)
-        await update.message.reply_text(f"✅ User {uid} removed from admins.")
-    except ValueError:
-        await update.message.reply_text("Invalid user ID.")
+    remove_admin(uid)
+    await update.message.reply_text(f"✅ User {uid} removed from admins.")
 
 
-async def cmd_allow_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
+async def cmd_allow_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /allowuser <user_id>."""
+    if not update.message:
+        return
+    if not _require_admin(update):
         await update.message.reply_text("❌ Admin only.")
         return
-    if not context.args:
+    uid = _parse_user_id_arg(context)
+    if uid is None:
         await update.message.reply_text("Usage: /allowuser <user_id>")
         return
-    try:
-        uid = int(context.args[0])
-        add_allowed_user(uid)
-        await update.message.reply_text(f"✅ User {uid} allowed.")
-    except ValueError:
-        await update.message.reply_text("Invalid user ID.")
+    add_allowed_user(uid)
+    await update.message.reply_text(f"✅ User {uid} allowed.")
 
 
-async def cmd_block_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
+async def cmd_block_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /blockuser <user_id>."""
+    if not update.message:
+        return
+    if not _require_admin(update):
         await update.message.reply_text("❌ Admin only.")
         return
-    if not context.args:
+    uid = _parse_user_id_arg(context)
+    if uid is None:
         await update.message.reply_text("Usage: /blockuser <user_id>")
         return
-    try:
-        uid = int(context.args[0])
-        remove_allowed_user(uid)
-        await update.message.reply_text(f"✅ User {uid} blocked.")
-    except ValueError:
-        await update.message.reply_text("Invalid user ID.")
+    remove_allowed_user(uid)
+    await update.message.reply_text(f"✅ User {uid} blocked.")
 
 
-async def cmd_all_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
+async def cmd_all_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /allusers — list all registered users."""
+    if not update.message:
+        return
+    if not _require_admin(update):
         await update.message.reply_text("❌ Admin only.")
         return
     users = get_all_users()
     if not users:
         await update.message.reply_text("No users yet.")
         return
+
     lines = ["👥 *All Users:*\n"]
     for u in users[:30]:
         name = u.get("first_name") or u.get("username") or "Unknown"
+        last_seen_ts = u.get("last_seen", 0)
+        last_seen_str = datetime.fromtimestamp(last_seen_ts).strftime("%Y-%m-%d")
         lines.append(
             f"• {name} (`{u['user_id']}`) — {u['total_messages']} msgs, "
-            f"last seen {datetime.fromtimestamp(u.get('last_seen', 0)).strftime('%Y-%m-%d')}"
+            f"last seen {last_seen_str}"
         )
+
     msg = "\n".join(lines)
-    chunks = split_message(msg)
-    for chunk in chunks:
+    for chunk in split_message(msg):
         await update.message.reply_text(chunk, parse_mode="Markdown")
 
 
-async def cmd_global_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
+async def cmd_global_stats(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle /globalstats — show aggregate bot statistics."""
+    if not update.message:
+        return
+    if not _require_admin(update):
         await update.message.reply_text("❌ Admin only.")
         return
     stats = get_global_stats()
@@ -272,13 +339,17 @@ async def cmd_global_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
-async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
+async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /broadcast <message> — send a message to all users."""
+    if not update.message:
+        return
+    if not _require_admin(update):
         await update.message.reply_text("❌ Admin only.")
         return
     if not context.args:
         await update.message.reply_text("Usage: /broadcast <message>")
         return
+
     message_text = " ".join(context.args)
     users = get_all_users()
     sent = 0
@@ -293,27 +364,40 @@ async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sent += 1
         except Exception:
             failed += 1
+
     await update.message.reply_text(
         f"📢 Broadcast complete: {sent} sent, {failed} failed."
     )
 
 
-async def cmd_rate_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
+async def cmd_rate_limit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /ratelimit reset <user_id>."""
+    if not update.message:
+        return
+    if not _require_admin(update):
         await update.message.reply_text("❌ Admin only.")
         return
-    if len(context.args) >= 2 and context.args[0] == "reset":
+    if (
+        context.args
+        and len(context.args) >= 2
+        and context.args[0] == "reset"
+    ):
         try:
             uid = int(context.args[1])
-            global_rate_limiter.reset(uid)
-            await update.message.reply_text(f"✅ Rate limit reset for user {uid}.")
         except ValueError:
             await update.message.reply_text("Invalid user ID.")
+            return
+        global_rate_limiter.reset(uid)
+        await update.message.reply_text(f"✅ Rate limit reset for user {uid}.")
     else:
         await update.message.reply_text("Usage: /ratelimit reset <user_id>")
 
 
-def register_command_handlers(app):
+# ─── Registration ──────────────────────────────────────────────────────────────
+
+
+def register_command_handlers(app: Any) -> None:
+    """Register all command handlers on the Telegram Application."""
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("status", cmd_status))

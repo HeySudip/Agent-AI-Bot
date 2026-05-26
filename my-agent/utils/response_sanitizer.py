@@ -22,15 +22,13 @@ import logging
 import re
 from collections.abc import Iterable
 
-logger = logging.getLogger(__name__)
-
 __all__ = ["sanitize_response", "FILE_PATH_TAG_RE"]
 
-FILE_PATH_TAG_RE = re.compile(r"__FILE_PATH__=\S+")
+logger = logging.getLogger(__name__)
 
-# A small allow-list of tool names the model might hallucinate as text.
-# Listing them explicitly keeps us from accidentally clipping legitimate
-# parenthetical sentences such as "I called the API (twice)".
+FILE_PATH_TAG_RE: re.Pattern[str] = re.compile(r"__FILE_PATH__=\S+")
+
+# Tool names the model might hallucinate as text.
 _KNOWN_TOOL_NAMES: tuple[str, ...] = (
     "research_and_create_pdf",
     "generate_text_to_pdf",
@@ -55,7 +53,7 @@ _KNOWN_TOOL_NAMES: tuple[str, ...] = (
     "save_api_key",
 )
 
-_TOOL_CALL_AS_TEXT_RE = re.compile(
+_TOOL_CALL_AS_TEXT_RE: re.Pattern[str] = re.compile(
     r"""
     (?:^|\n)               # start of line
     [\s>•\-*]*             # optional leading whitespace / bullets / quotes
@@ -68,7 +66,7 @@ _TOOL_CALL_AS_TEXT_RE = re.compile(
     re.VERBOSE | re.IGNORECASE,
 )
 
-_FAKE_FILE_CLAIM_RE = re.compile(
+_FAKE_FILE_CLAIM_RE: re.Pattern[str] = re.compile(
     r"""
     (?:^|(?<=[\s>•\-*]))
     (?:here\s*(?:'?s|\s+is)\s+your\s+(?:pdf|file|document|answer\s+key|notes|paper)!?
@@ -81,8 +79,7 @@ _FAKE_FILE_CLAIM_RE = re.compile(
     re.VERBOSE | re.IGNORECASE,
 )
 
-# Chain-of-thought markers that should never appear in user-visible text.
-_COT_HEADERS_RE = re.compile(
+_COT_HEADERS_RE: re.Pattern[str] = re.compile(
     r"""^[ \t]*
     (?:\#{1,4}\s*)?           # optional markdown heading
     (?:Step\s+\d+\s*[:.]      # "Step 1:", "Step 2."
@@ -99,9 +96,7 @@ _COT_HEADERS_RE = re.compile(
     re.VERBOSE | re.MULTILINE | re.IGNORECASE,
 )
 
-# Section headers that mirror the model's internal task plan rather than a
-# real heading the user wants to see.
-_PLAN_HEADERS_RE = re.compile(
+_PLAN_HEADERS_RE: re.Pattern[str] = re.compile(
     r"""^[ \t]*\#{1,4}\s+
     (?:Understand\s+the\s+Request
        |Determine\s+the\s+(?:Appropriate\s+)?Action
@@ -116,8 +111,10 @@ _PLAN_HEADERS_RE = re.compile(
 
 
 def _has_cot_structure(text: str) -> bool:
-    """True when the text looks like a multi-step planning monologue."""
-    step_count = len(re.findall(r"^\s*\#{0,4}\s*Step\s+\d+", text, re.MULTILINE | re.IGNORECASE))
+    """Return True when the text looks like a multi-step planning monologue."""
+    step_count = len(
+        re.findall(r"^\s*\#{0,4}\s*Step\s+\d+", text, re.MULTILINE | re.IGNORECASE)
+    )
     return step_count >= 2 or bool(
         re.search(r"^\s*The final answer is\b", text, re.MULTILINE | re.IGNORECASE)
     )
@@ -132,17 +129,13 @@ def _extract_after_final_answer(text: str) -> str | None:
         re.IGNORECASE,
     )
     if marker:
-        tail = text[marker.end():].strip()
+        tail = text[marker.end() :].strip()
         return tail or None
     return None
 
 
 def _strip_cot_blocks(text: str) -> str:
-    """Remove planning headers and the body of any visible Step blocks.
-
-    We cut from any "## Step N: …" / "Step N: …" line up to the next blank
-    line, the next ``Step``/``Final answer`` marker, or end of string.
-    """
+    """Remove planning headers and the body of visible Step blocks."""
     pattern = re.compile(
         r"""
         ^[ \t]*(?:\#{1,4}\s*)?
@@ -167,8 +160,7 @@ def _strip_cot_blocks(text: str) -> str:
 def _strip_hallucinated_tool_calls(text: str) -> tuple[str, list[str]]:
     """Remove plaintext that looks like a tool invocation.
 
-    Returns the cleaned text plus the list of tool names found, so the
-    caller can log or branch on them.
+    Returns the cleaned text plus the list of tool names found.
     """
     found: list[str] = []
 
@@ -181,7 +173,7 @@ def _strip_hallucinated_tool_calls(text: str) -> tuple[str, list[str]]:
 
 
 def _strip_unfulfilled_file_claims(text: str) -> str:
-    """Drop "Here's your PDF" lines when no real file path is present."""
+    """Drop 'Here's your PDF' lines when no real file path is present."""
     if FILE_PATH_TAG_RE.search(text):
         return text
     return _FAKE_FILE_CLAIM_RE.sub("", text)
@@ -196,12 +188,10 @@ def sanitize_response(text: str) -> str:
     """Apply every sanitiser in order. Safe to call on any string.
 
     The function is intentionally idempotent: calling it twice produces
-    the same result as calling it once, so re-running on already-clean
-    text is a no-op.
+    the same result as calling it once.
     """
     if not isinstance(text, str) or not text.strip():
         return text or ""
-
 
     # 1. If the model dumped a multi-step plan, prefer the post-"Final answer" tail.
     if _has_cot_structure(text):
@@ -229,8 +219,6 @@ def sanitize_response(text: str) -> str:
     text = _collapse_blank_runs(text)
 
     if not text.strip():
-        # Sanitising stripped everything (e.g. the response WAS the
-        # hallucinated tool call). Provide a safe, honest fallback.
         logger.warning("LLM response was empty after sanitisation; using fallback.")
         return (
             "I wasn't able to put together a proper answer this time. "

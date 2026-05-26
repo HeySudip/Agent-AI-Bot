@@ -1,23 +1,37 @@
-import sqlite3
-import json
-import os
-import time
+"""SQLite-backed conversation memory and user statistics store."""
+
+from __future__ import annotations
+
 import logging
+import os
+import sqlite3
+import time
 from datetime import datetime
-from typing import Optional
+from typing import Any
+
+__all__ = [
+    "init_db",
+    "get_connection",
+    "ConversationStore",
+    "UserStats",
+    "get_all_users",
+    "get_global_stats",
+]
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data.db")
+DB_PATH: str = os.path.join(os.path.dirname(__file__), "..", "data.db")
 
 
 def get_connection() -> sqlite3.Connection:
+    """Open a connection to the SQLite database with row-factory enabled."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
 
-def init_db():
+def init_db() -> None:
+    """Create tables and indexes if they do not already exist."""
     with get_connection() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS conversations (
@@ -70,39 +84,42 @@ def init_db():
 
 
 class ConversationStore:
+    """Per-user conversation history backed by SQLite."""
 
-    def __init__(self, user_id: int, max_length: int = 30):
+    def __init__(self, user_id: int, max_length: int = 30) -> None:
         self.user_id = user_id
         self.max_length = max_length
 
-    def add_message(self, role: str, content: str, message_type: str = "text"):
+    def add_message(
+        self, role: str, content: str, message_type: str = "text"
+    ) -> None:
+        """Append a message and trim old entries beyond the retention limit."""
         with get_connection() as conn:
             conn.execute(
-                "INSERT INTO conversations (user_id, role, content, timestamp, message_type) VALUES (?, ?, ?, ?, ?)",
-                (self.user_id, role, content, time.time(), message_type)
+                "INSERT INTO conversations (user_id, role, content, timestamp, message_type) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (self.user_id, role, content, time.time(), message_type),
             )
         self._trim()
 
-    def get_history(self, limit: Optional[int] = None) -> list:
+    def get_history(self, limit: int | None = None) -> list[dict[str, str]]:
+        """Return recent messages as ``[{"role": ..., "content": ...}]``."""
         n = limit or self.max_length
         with get_connection() as conn:
             rows = conn.execute(
-                """SELECT role, content FROM conversations
-                   WHERE user_id = ?
-                   ORDER BY timestamp DESC
-                   LIMIT ?""",
-                (self.user_id, n)
+                "SELECT role, content FROM conversations "
+                "WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",
+                (self.user_id, n),
             ).fetchall()
         return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
 
-    def get_history_with_timestamps(self, limit: int = 50) -> list:
+    def get_history_with_timestamps(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Return recent messages including timestamp metadata."""
         with get_connection() as conn:
             rows = conn.execute(
-                """SELECT role, content, timestamp, message_type FROM conversations
-                   WHERE user_id = ?
-                   ORDER BY timestamp DESC
-                   LIMIT ?""",
-                (self.user_id, limit)
+                "SELECT role, content, timestamp, message_type FROM conversations "
+                "WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",
+                (self.user_id, limit),
             ).fetchall()
         return [
             {
@@ -110,38 +127,47 @@ class ConversationStore:
                 "content": r["content"],
                 "timestamp": r["timestamp"],
                 "message_type": r["message_type"],
-                "time_str": datetime.fromtimestamp(r["timestamp"]).strftime("%Y-%m-%d %H:%M:%S"),
+                "time_str": datetime.fromtimestamp(r["timestamp"]).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                ),
             }
             for r in reversed(rows)
         ]
 
-    def clear(self):
+    def clear(self) -> None:
+        """Delete all conversation messages for this user."""
         with get_connection() as conn:
-            conn.execute("DELETE FROM conversations WHERE user_id = ?", (self.user_id,))
+            conn.execute(
+                "DELETE FROM conversations WHERE user_id = ?", (self.user_id,)
+            )
 
     def count(self) -> int:
+        """Return the total number of stored messages for this user."""
         with get_connection() as conn:
             row = conn.execute(
                 "SELECT COUNT(*) as cnt FROM conversations WHERE user_id = ?",
-                (self.user_id,)
+                (self.user_id,),
             ).fetchone()
         return row["cnt"] if row else 0
 
-    def _trim(self):
+    def _trim(self) -> None:
+        """Remove messages beyond ``max_length * 2`` to bound storage."""
         with get_connection() as conn:
             rows = conn.execute(
-                """SELECT id FROM conversations WHERE user_id = ?
-                   ORDER BY timestamp DESC LIMIT -1 OFFSET ?""",
-                (self.user_id, self.max_length * 2)
+                "SELECT id FROM conversations WHERE user_id = ? "
+                "ORDER BY timestamp DESC LIMIT -1 OFFSET ?",
+                (self.user_id, self.max_length * 2),
             ).fetchall()
             if rows:
                 ids = [r["id"] for r in rows]
+                placeholders = ",".join("?" * len(ids))
                 conn.execute(
-                    f"DELETE FROM conversations WHERE id IN ({','.join('?' * len(ids))})",
-                    ids
+                    f"DELETE FROM conversations WHERE id IN ({placeholders})",
+                    ids,
                 )
 
     def export_text(self) -> str:
+        """Export conversation history as a plain-text string."""
         history = self.get_history_with_timestamps(limit=200)
         if not history:
             return "No conversation history found."
@@ -153,97 +179,122 @@ class ConversationStore:
 
 
 class UserStats:
+    """Per-user statistics and action logging."""
 
-    def __init__(self, user_id: int):
+    def __init__(self, user_id: int) -> None:
         self.user_id = user_id
 
-    def upsert(self, username: str = "", first_name: str = "", last_name: str = ""):
+    def upsert(
+        self,
+        username: str = "",
+        first_name: str = "",
+        last_name: str = "",
+    ) -> None:
+        """Create or update the user record, incrementing message count."""
         now = time.time()
         with get_connection() as conn:
             existing = conn.execute(
-                "SELECT user_id FROM user_stats WHERE user_id = ?", (self.user_id,)
+                "SELECT user_id FROM user_stats WHERE user_id = ?",
+                (self.user_id,),
             ).fetchone()
             if existing:
                 conn.execute(
-                    """UPDATE user_stats
-                       SET username=?, first_name=?, last_name=?, last_seen=?,
-                           total_messages = total_messages + 1
-                       WHERE user_id=?""",
-                    (username, first_name, last_name, now, self.user_id)
+                    "UPDATE user_stats "
+                    "SET username=?, first_name=?, last_name=?, last_seen=?, "
+                    "    total_messages = total_messages + 1 "
+                    "WHERE user_id=?",
+                    (username, first_name, last_name, now, self.user_id),
                 )
             else:
                 conn.execute(
-                    """INSERT INTO user_stats
-                       (user_id, username, first_name, last_name, total_messages, first_seen, last_seen)
-                       VALUES (?, ?, ?, ?, 1, ?, ?)""",
-                    (self.user_id, username, first_name, last_name, now, now)
+                    "INSERT INTO user_stats "
+                    "(user_id, username, first_name, last_name, total_messages, first_seen, last_seen) "
+                    "VALUES (?, ?, ?, ?, 1, ?, ?)",
+                    (self.user_id, username, first_name, last_name, now, now),
                 )
 
-    def increment(self, field: str, amount: int = 1):
-        valid = {"total_messages", "github_actions", "web_searches", "urls_summarized", "total_tokens_approx"}
-        if field not in valid:
+    def increment(self, field: str, amount: int = 1) -> None:
+        """Increment a numeric stats field by *amount*."""
+        valid_fields = {
+            "total_messages",
+            "github_actions",
+            "web_searches",
+            "urls_summarized",
+            "total_tokens_approx",
+        }
+        if field not in valid_fields:
             return
         with get_connection() as conn:
             conn.execute(
                 f"UPDATE user_stats SET {field} = {field} + ? WHERE user_id = ?",
-                (amount, self.user_id)
+                (amount, self.user_id),
             )
 
-    def get(self) -> Optional[dict]:
+    def get(self) -> dict[str, Any] | None:
+        """Return the full stats row as a dict, or None if not found."""
         with get_connection() as conn:
             row = conn.execute(
                 "SELECT * FROM user_stats WHERE user_id = ?", (self.user_id,)
             ).fetchone()
-        if not row:
-            return None
-        return dict(row)
+        return dict(row) if row else None
 
-    def log_action(self, action: str, details: str = ""):
+    def log_action(self, action: str, details: str = "") -> None:
+        """Record an action in the usage log."""
         with get_connection() as conn:
             conn.execute(
-                "INSERT INTO usage_log (user_id, action, details, timestamp) VALUES (?, ?, ?, ?)",
-                (self.user_id, action, details, time.time())
+                "INSERT INTO usage_log (user_id, action, details, timestamp) "
+                "VALUES (?, ?, ?, ?)",
+                (self.user_id, action, details, time.time()),
             )
 
-    def get_recent_actions(self, limit: int = 20) -> list:
+    def get_recent_actions(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Return the most recent logged actions."""
         with get_connection() as conn:
             rows = conn.execute(
-                """SELECT action, details, timestamp FROM usage_log
-                   WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?""",
-                (self.user_id, limit)
+                "SELECT action, details, timestamp FROM usage_log "
+                "WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",
+                (self.user_id, limit),
             ).fetchall()
         return [
             {
                 "action": r["action"],
                 "details": r["details"],
-                "time": datetime.fromtimestamp(r["timestamp"]).strftime("%Y-%m-%d %H:%M"),
+                "time": datetime.fromtimestamp(r["timestamp"]).strftime(
+                    "%Y-%m-%d %H:%M"
+                ),
             }
             for r in rows
         ]
 
-    def add_note(self, note: str):
+    def add_note(self, note: str) -> None:
+        """Store a free-text note for this user."""
         with get_connection() as conn:
             conn.execute(
                 "INSERT INTO user_notes (user_id, note, created_at) VALUES (?, ?, ?)",
-                (self.user_id, note, time.time())
+                (self.user_id, note, time.time()),
             )
 
-    def get_notes(self) -> list:
+    def get_notes(self) -> list[dict[str, str]]:
+        """Return all notes for this user, newest first."""
         with get_connection() as conn:
             rows = conn.execute(
-                "SELECT note, created_at FROM user_notes WHERE user_id = ? ORDER BY created_at DESC",
-                (self.user_id,)
+                "SELECT note, created_at FROM user_notes "
+                "WHERE user_id = ? ORDER BY created_at DESC",
+                (self.user_id,),
             ).fetchall()
         return [
             {
                 "note": r["note"],
-                "time": datetime.fromtimestamp(r["created_at"]).strftime("%Y-%m-%d %H:%M"),
+                "time": datetime.fromtimestamp(r["created_at"]).strftime(
+                    "%Y-%m-%d %H:%M"
+                ),
             }
             for r in rows
         ]
 
 
-def get_all_users() -> list:
+def get_all_users() -> list[dict[str, Any]]:
+    """Return all user stats rows ordered by message count descending."""
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT * FROM user_stats ORDER BY total_messages DESC"
@@ -251,21 +302,36 @@ def get_all_users() -> list:
     return [dict(r) for r in rows]
 
 
-def get_global_stats() -> dict:
+def get_global_stats() -> dict[str, int]:
+    """Return aggregate statistics across all users."""
     with get_connection() as conn:
-        total_users = conn.execute("SELECT COUNT(*) as cnt FROM user_stats").fetchone()["cnt"]
-        total_messages = conn.execute(
-            "SELECT SUM(total_messages) as s FROM user_stats"
-        ).fetchone()["s"] or 0
-        total_github = conn.execute(
-            "SELECT SUM(github_actions) as s FROM user_stats"
-        ).fetchone()["s"] or 0
-        total_searches = conn.execute(
-            "SELECT SUM(web_searches) as s FROM user_stats"
-        ).fetchone()["s"] or 0
-        total_urls = conn.execute(
-            "SELECT SUM(urls_summarized) as s FROM user_stats"
-        ).fetchone()["s"] or 0
+        total_users = conn.execute(
+            "SELECT COUNT(*) as cnt FROM user_stats"
+        ).fetchone()["cnt"]
+        total_messages = (
+            conn.execute(
+                "SELECT SUM(total_messages) as s FROM user_stats"
+            ).fetchone()["s"]
+            or 0
+        )
+        total_github = (
+            conn.execute(
+                "SELECT SUM(github_actions) as s FROM user_stats"
+            ).fetchone()["s"]
+            or 0
+        )
+        total_searches = (
+            conn.execute(
+                "SELECT SUM(web_searches) as s FROM user_stats"
+            ).fetchone()["s"]
+            or 0
+        )
+        total_urls = (
+            conn.execute(
+                "SELECT SUM(urls_summarized) as s FROM user_stats"
+            ).fetchone()["s"]
+            or 0
+        )
     return {
         "total_users": total_users,
         "total_messages": total_messages,

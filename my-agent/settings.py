@@ -1,12 +1,9 @@
-"""Typed environment-driven settings on top of the existing JSON config.
+"""Typed environment-driven settings.
 
 The legacy ``config.py`` keeps writing chat-supplied API keys to a JSON file
 on disk (so users can paste keys at runtime). This module layers a typed
 :class:`Settings` object over the env-var inputs so cross-field invariants
 are validated up-front and missing required values fail fast.
-
-If ``pydantic-settings`` is not installed this module degrades gracefully
-to a dataclass-based fallback.
 """
 
 from __future__ import annotations
@@ -19,8 +16,9 @@ __all__ = ["Settings", "load_settings"]
 
 
 def _env_int(name: str, default: int) -> int:
+    """Read an integer from the environment, returning *default* on failure."""
     raw = os.getenv(name)
-    if raw is None or raw.strip() == "":
+    if not raw or not raw.strip():
         return default
     try:
         return int(raw)
@@ -29,6 +27,7 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _env_bool(name: str, default: bool) -> bool:
+    """Read a boolean from the environment (truthy: 1/true/yes/on)."""
     raw = os.getenv(name)
     if raw is None:
         return default
@@ -36,8 +35,8 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 def _env_str(name: str, default: str) -> str:
-    raw = os.getenv(name)
-    return raw if raw is not None else default
+    """Read a string from the environment, returning *default* if unset."""
+    return os.getenv(name, default)
 
 
 @dataclass(frozen=True)
@@ -88,6 +87,7 @@ class Settings:
 
     @property
     def is_production(self) -> bool:
+        """Return True when running in production mode."""
         return self.environment.lower() == "prod"
 
 

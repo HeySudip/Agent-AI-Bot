@@ -30,6 +30,8 @@ dependencies = [
     "langchain-groq",
     "langchain-openai",
     "langchain-huggingface",
+    "google-genai>=1.0",
+    "groq>=0.9",
     "duckduckgo-search",
     "PyGithub",
     "python-telegram-bot",

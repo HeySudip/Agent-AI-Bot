@@ -1,29 +1,49 @@
-import math
-import re
+"""General-purpose utility tools.
+
+Provides a safe calculator (AST-walking evaluator), date/time lookup,
+code analysis, unit conversion, text encoding/decoding, random text
+generation, JSON formatting, and text comparison.
+"""
+
+from __future__ import annotations
+
+import base64
+import difflib
 import json
-import time
 import logging
+import random
+import re
+import string
+import urllib.parse
+import uuid
 from datetime import datetime, timezone
+from typing import Any
+
 from langchain.tools import tool
-from config import load_config
+
 from safety.safe_eval import SafeEvalError, safe_eval
 
 logger = logging.getLogger(__name__)
 
+__all__ = ["build_utility_tools"]
+
+
+# ─── Public builder ───────────────────────────────────────────────────────────
+
 
 def build_utility_tools() -> list:
+    """Build and return the list of general-purpose LangChain tools."""
 
     @tool
     def calculate(expression: str) -> str:
-        """
-        Evaluate a mathematical expression safely.
+        """Evaluate a mathematical expression safely.
+
         Supports: +, -, *, /, **, %, sqrt, sin, cos, tan, log, abs, round, etc.
         Examples: "2 ** 10", "sqrt(144)", "sin(3.14159/2)", "log(100, 10)"
 
-        Implementation: AST walker that allows only numeric literals, the
-        named constants pi/e/tau/inf, the standard arithmetic operators, and
-        a small allow-list of math functions. The previous ``eval()``-based
-        implementation was removed because it accepted arbitrary Python.
+        Uses an AST-walking evaluator — no eval(). Only numeric literals,
+        named constants (pi, e, tau, inf), arithmetic operators, and an
+        allow-list of math functions are permitted.
         """
         try:
             result = safe_eval(expression)
@@ -31,20 +51,22 @@ def build_utility_tools() -> list:
             return f"Error: {exc}"
 
         if isinstance(result, float):
-            if result.is_integer():
-                return str(int(result))
-            return f"{result:.10g}"
+            return str(int(result)) if result.is_integer() else f"{result:.10g}"
         return str(result)
 
     @tool
     def get_current_datetime(timezone_name: str = "UTC") -> str:
-        """
-        Get the current date and time.
-        timezone_name: e.g., 'UTC', 'US/Eastern', 'Asia/Kolkata', 'Europe/London'
-        Returns formatted date, time, day of week, and Unix timestamp.
+        """Get the current date and time.
+
+        Args:
+            timezone_name: IANA timezone (e.g. 'UTC', 'US/Eastern', 'Asia/Kolkata').
+
+        Returns:
+            Formatted date, time, day of week, timezone, Unix timestamp, and ISO 8601.
         """
         try:
             import zoneinfo
+
             tz = zoneinfo.ZoneInfo(timezone_name)
             now = datetime.now(tz)
         except Exception:
@@ -62,75 +84,71 @@ def build_utility_tools() -> list:
 
     @tool
     def format_and_analyze_code(code: str, action: str = "analyze") -> str:
+        """Analyze or format code.
+
+        Args:
+            code: Source code text to analyze.
+            action: One of 'analyze' (detect language, count lines, complexity),
+                    'count_lines', or 'detect_language'.
         """
-        Analyze or format code.
-        action options: 'analyze' (detect language, count lines, complexity),
-                        'count_lines', 'detect_language'
-        """
+        from utils.formatting import detect_language
+
         if action == "detect_language":
-            from utils.formatting import detect_language
-            lang = detect_language(code)
-            return f"Detected language: **{lang}**"
+            return f"Detected language: **{detect_language(code)}**"
 
         lines = code.split("\n")
         non_empty = [l for l in lines if l.strip()]
-        comment_lines = [l for l in non_empty if l.strip().startswith(("#", "//", "/*", "*", "<!--"))]
+        comment_lines = [
+            l for l in non_empty if l.strip().startswith(("#", "//", "/*", "*", "<!--"))
+        ]
         function_count = len(re.findall(r"\bdef \w+|\bfunction \w+|\bfunc \w+|\bfn \w+", code))
         class_count = len(re.findall(r"\bclass \w+", code))
         import_count = len(re.findall(r"^\s*(import |from |require|use )", code, re.MULTILINE))
 
-        from utils.formatting import detect_language
-        lang = detect_language(code)
+        if function_count < 5:
+            complexity = "simple"
+        elif function_count < 20:
+            complexity = "moderate"
+        else:
+            complexity = "complex"
 
         return (
             f"**Code Analysis:**\n"
-            f"• Language: `{lang}`\n"
+            f"• Language: `{detect_language(code)}`\n"
             f"• Total lines: `{len(lines)}`\n"
             f"• Non-empty lines: `{len(non_empty)}`\n"
             f"• Comment lines: `{len(comment_lines)}`\n"
             f"• Functions/methods: `{function_count}`\n"
             f"• Classes: `{class_count}`\n"
             f"• Imports: `{import_count}`\n"
-            f"• Estimated complexity: `{'simple' if function_count < 5 else 'moderate' if function_count < 20 else 'complex'}`"
+            f"• Estimated complexity: `{complexity}`"
         )
 
     @tool
     def convert_units(value: float, from_unit: str, to_unit: str) -> str:
-        """
-        Convert between common units.
-        Supports: length (m, km, ft, in, mi, cm, mm),
-                  weight (kg, g, lb, oz),
+        """Convert between common units.
+
+        Supports: length (m, km, ft, in, mi, cm, mm, yd),
+                  weight (kg, g, mg, lb, oz, ton),
                   temperature (c, f, k),
                   data (b, kb, mb, gb, tb),
-                  time (s, ms, min, hr, day)
+                  time (s, ms, min, hr, day, week)
         """
-        from_unit = from_unit.lower().strip()
-        to_unit = to_unit.lower().strip()
+        from_u = from_unit.lower().strip()
+        to_u = to_unit.lower().strip()
 
-        # Temperature (special case)
-        temp_units = {"c", "f", "k", "celsius", "fahrenheit", "kelvin"}
-        if from_unit in temp_units or to_unit in temp_units:
-            aliases = {"celsius": "c", "fahrenheit": "f", "kelvin": "k"}
-            f = aliases.get(from_unit, from_unit)
-            t = aliases.get(to_unit, to_unit)
-            if f == "c" and t == "f":
-                result = value * 9 / 5 + 32
-            elif f == "f" and t == "c":
-                result = (value - 32) * 5 / 9
-            elif f == "c" and t == "k":
-                result = value + 273.15
-            elif f == "k" and t == "c":
-                result = value - 273.15
-            elif f == "f" and t == "k":
-                result = (value - 32) * 5 / 9 + 273.15
-            elif f == "k" and t == "f":
-                result = (value - 273.15) * 9 / 5 + 32
-            else:
-                result = value
+        # Temperature requires special formulas
+        temp_aliases: dict[str, str] = {"celsius": "c", "fahrenheit": "f", "kelvin": "k"}
+        temp_units = {"c", "f", "k", *temp_aliases}
+
+        if from_u in temp_units or to_u in temp_units:
+            f = temp_aliases.get(from_u, from_u)
+            t = temp_aliases.get(to_u, to_u)
+            result = _convert_temperature(value, f, t)
             return f"{value}°{f.upper()} = {result:.4g}°{t.upper()}"
 
-        # Conversion tables (to base unit)
-        tables = {
+        # Linear conversion via base-unit tables
+        tables: dict[str, float] = {
             # Length → meters
             "m": 1, "km": 1000, "cm": 0.01, "mm": 0.001,
             "ft": 0.3048, "in": 0.0254, "mi": 1609.344, "yd": 0.9144,
@@ -141,22 +159,28 @@ def build_utility_tools() -> list:
             # Time → seconds
             "s": 1, "ms": 0.001, "min": 60, "hr": 3600, "day": 86400, "week": 604800,
         }
-        if from_unit not in tables or to_unit not in tables:
-            return f"Unknown unit '{from_unit}' or '{to_unit}'. Supported: {', '.join(sorted(tables.keys()))}"
-        base = value * tables[from_unit]
-        result = base / tables[to_unit]
-        return f"{value} {from_unit} = {result:.6g} {to_unit}"
+
+        if from_u not in tables or to_u not in tables:
+            supported = ", ".join(sorted(tables))
+            return f"Unknown unit '{from_u}' or '{to_u}'. Supported: {supported}"
+
+        result = value * tables[from_u] / tables[to_u]
+        return f"{value} {from_u} = {result:.6g} {to_u}"
 
     @tool
     def encode_decode(text: str, operation: str) -> str:
-        """
-        Encode or decode text in various formats.
-        operation: 'base64_encode', 'base64_decode', 'url_encode', 'url_decode',
-                   'hex_encode', 'hex_decode', 'json_pretty', 'json_minify', 'count_chars'
-        """
-        import base64
-        import urllib.parse
+        """Encode or decode text in various formats.
 
+        Args:
+            text: Input text to process.
+            operation: One of 'base64_encode', 'base64_decode', 'url_encode',
+                       'url_decode', 'hex_encode', 'hex_decode', 'json_pretty',
+                       'json_minify', 'count_chars'.
+        """
+        _VALID_OPS = [
+            "base64_encode", "base64_decode", "url_encode", "url_decode",
+            "hex_encode", "hex_decode", "json_pretty", "json_minify", "count_chars",
+        ]
         try:
             if operation == "base64_encode":
                 return base64.b64encode(text.encode()).decode()
@@ -186,23 +210,19 @@ def build_utility_tools() -> list:
                     f"Lines: {lines}"
                 )
             else:
-                ops = ["base64_encode", "base64_decode", "url_encode", "url_decode",
-                       "hex_encode", "hex_decode", "json_pretty", "json_minify", "count_chars"]
-                return f"Unknown operation. Valid: {', '.join(ops)}"
+                return f"Unknown operation. Valid: {', '.join(_VALID_OPS)}"
         except Exception as e:
-            return f"Error: {str(e)}"
+            return f"Error: {e}"
 
     @tool
     def generate_text(text_type: str, params: str = "") -> str:
-        """
-        Generate random useful text content.
-        text_type: 'uuid', 'password', 'lorem', 'random_number', 'color'
-        params: optional parameters (e.g., length for password, count for lorem words)
-        """
-        import uuid
-        import random
-        import string
+        """Generate random useful text content.
 
+        Args:
+            text_type: One of 'uuid', 'password', 'lorem', 'random_number', 'color'.
+            params: Optional parameters — length for password, word count for lorem,
+                    'min-max' range for random_number.
+        """
         if text_type == "uuid":
             return str(uuid.uuid4())
 
@@ -229,7 +249,7 @@ def build_utility_tools() -> list:
                 low = int(parts[0]) if len(parts) > 0 else 1
                 high = int(parts[1]) if len(parts) > 1 else 100
                 return str(random.randint(low, high))
-            except Exception:
+            except (ValueError, IndexError):
                 return str(random.randint(1, 100))
 
         elif text_type == "color":
@@ -242,29 +262,28 @@ def build_utility_tools() -> list:
 
     @tool
     def format_json(json_text: str) -> str:
-        """
-        Parse and pretty-format JSON text.
-        Also validates JSON and reports any errors.
-        """
+        """Parse and pretty-format JSON text. Also validates and reports errors."""
         try:
             parsed = json.loads(json_text)
             pretty = json.dumps(parsed, indent=2, ensure_ascii=False)
-            key_count = len(parsed) if isinstance(parsed, dict) else len(parsed) if isinstance(parsed, list) else "N/A"
+            if isinstance(parsed, (dict, list)):
+                item_count = len(parsed)
+            else:
+                item_count = "N/A"
             type_name = type(parsed).__name__
             return (
-                f"✅ Valid JSON ({type_name}, {key_count} items)\n\n"
+                f"✅ Valid JSON ({type_name}, {item_count} items)\n\n"
                 f"```json\n{pretty}\n```"
             )
         except json.JSONDecodeError as e:
-            return f"❌ Invalid JSON: {str(e)}"
+            return f"❌ Invalid JSON: {e}"
 
     @tool
     def compare_texts(text1: str, text2: str) -> str:
+        """Compare two texts and show differences.
+
+        Returns a unified diff summary showing added and removed lines.
         """
-        Compare two texts and show differences.
-        Returns a diff summary showing added, removed, and changed lines.
-        """
-        import difflib
         lines1 = text1.splitlines(keepends=True)
         lines2 = text2.splitlines(keepends=True)
         diff = list(difflib.unified_diff(lines1, lines2, fromfile="text1", tofile="text2", lineterm=""))
@@ -292,3 +311,20 @@ def build_utility_tools() -> list:
         format_json,
         compare_texts,
     ]
+
+
+# ─── Private helpers ──────────────────────────────────────────────────────────
+
+
+def _convert_temperature(value: float, from_unit: str, to_unit: str) -> float:
+    """Convert between Celsius (c), Fahrenheit (f), and Kelvin (k)."""
+    conversions: dict[tuple[str, str], Any] = {
+        ("c", "f"): lambda v: v * 9 / 5 + 32,
+        ("f", "c"): lambda v: (v - 32) * 5 / 9,
+        ("c", "k"): lambda v: v + 273.15,
+        ("k", "c"): lambda v: v - 273.15,
+        ("f", "k"): lambda v: (v - 32) * 5 / 9 + 273.15,
+        ("k", "f"): lambda v: (v - 273.15) * 9 / 5 + 32,
+    }
+    fn = conversions.get((from_unit, to_unit))
+    return fn(value) if fn else value

@@ -18,8 +18,6 @@ __all__ = ["REDACTION_PLACEHOLDER", "redact_secrets", "structlog_redactor"]
 
 REDACTION_PLACEHOLDER: Final[str] = "[REDACTED]"
 
-# Each pattern targets a known secret format. Order matters only for
-# overlapping matches; ``re.sub`` walks left-to-right.
 _PATTERNS: Final[tuple[Pattern[str], ...]] = (
     # OpenAI keys
     re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b"),
@@ -66,10 +64,7 @@ _REDACT_KEY_FRAGMENTS: Final[tuple[str, ...]] = (
 
 
 def redact_secrets(text: str) -> str:
-    """Return ``text`` with known secret patterns replaced.
-
-    The function is a no-op if ``text`` is not a string.
-    """
+    """Return *text* with known secret patterns replaced by the placeholder."""
     if not isinstance(text, str) or not text:
         return text
     redacted = text
@@ -79,11 +74,13 @@ def redact_secrets(text: str) -> str:
 
 
 def _key_looks_sensitive(key: str) -> bool:
+    """Return True if *key* looks like it holds a secret value."""
     lowered = key.lower()
     return any(fragment in lowered for fragment in _REDACT_KEY_FRAGMENTS)
 
 
 def _redact_value(value: Any) -> Any:
+    """Recursively redact secrets within a value."""
     if isinstance(value, str):
         return redact_secrets(value)
     if isinstance(value, dict):
@@ -96,6 +93,7 @@ def _redact_value(value: Any) -> Any:
 
 
 def _redact_event_value(key: str, value: Any) -> Any:
+    """Redact a value, applying full redaction if the key looks sensitive."""
     if isinstance(value, str) and _key_looks_sensitive(key):
         return REDACTION_PLACEHOLDER if value else value
     return _redact_value(value)

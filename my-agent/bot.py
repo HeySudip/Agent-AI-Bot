@@ -1,12 +1,16 @@
+"""Telegram bot application entry point."""
+
+from __future__ import annotations
+
 import os
 import sys
-import logging
-import asyncio
+
 from dotenv import load_dotenv
 from telegram.ext import Application
-from memory.store import init_db
+
 from handlers import register_command_handlers, register_message_handlers
 from logging_config import configure_logging, get_logger
+from memory.store import init_db
 from settings import load_settings
 
 load_dotenv()
@@ -17,13 +21,14 @@ configure_logging(settings.log_level, fmt=settings.log_format or None)
 logger = get_logger(__name__)
 
 
-def build_app() -> Application:
+def build_app() -> Application:  # type: ignore[type-arg]
+    """Construct and configure the Telegram Application instance."""
     token = settings.telegram_bot_token or os.getenv("TELEGRAM_BOT_TOKEN", "")
     if not token:
         logger.error("TELEGRAM_BOT_TOKEN is not set.")
         sys.exit(1)
 
-    app = (
+    app: Application = (  # type: ignore[type-arg]
         Application.builder()
         .token(token)
         .concurrent_updates(True)
@@ -32,11 +37,11 @@ def build_app() -> Application:
 
     register_command_handlers(app)
     register_message_handlers(app)
-
     return app
 
 
-def main():
+def main() -> None:
+    """Initialize the database and start polling for updates."""
     logger.info("Initializing database...")
     init_db()
 

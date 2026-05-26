@@ -1,13 +1,29 @@
+"""Text formatting utilities for Telegram message output."""
+
+from __future__ import annotations
+
 import re
 from datetime import datetime
+from typing import Any
 
-MAX_TELEGRAM_LENGTH = 4096
-CODE_LANGS = {
+__all__ = [
+    "escape_markdown",
+    "format_for_telegram",
+    "split_message",
+    "format_repo_list",
+    "format_stats",
+    "format_uptime",
+    "detect_language",
+]
+
+MAX_TELEGRAM_LENGTH: int = 4096
+
+CODE_LANGS: frozenset[str] = frozenset({
     "python", "javascript", "typescript", "js", "ts", "py",
     "java", "c", "cpp", "c++", "go", "rust", "bash", "sh",
     "html", "css", "json", "yaml", "yml", "sql", "ruby",
     "php", "swift", "kotlin", "r", "matlab", "scala",
-}
+})
 
 
 def escape_markdown(text: str) -> str:
@@ -19,18 +35,18 @@ def escape_markdown(text: str) -> str:
 
 
 def format_for_telegram(text: str) -> str:
-    """
-    Convert markdown-style text to Telegram-compatible format.
-    Handles code blocks, bold, italic, links gracefully.
+    """Convert markdown-style text to Telegram-compatible Markdown format.
+
+    Handles code blocks, bold, italic, and links gracefully.
     """
     if not text:
         return text
 
     lines = text.split("\n")
-    output = []
+    output: list[str] = []
     in_code_block = False
     code_lang = ""
-    code_lines = []
+    code_lines: list[str] = []
 
     for line in lines:
         # Detect code block start
@@ -55,30 +71,34 @@ def format_for_telegram(text: str) -> str:
             code_lines.append(line)
             continue
 
-        # Inline code
+        # Inline code — preserve as-is
         line = re.sub(r"`([^`]+)`", r"`\1`", line)
 
-        # Bold: **text** or __text__
+        # Bold: **text** or __text__ → Telegram *bold*
         line = re.sub(r"\*\*(.+?)\*\*", r"*\1*", line)
         line = re.sub(r"__(.+?)__", r"*\1*", line)
 
-        # Italic: *text* or _text_ (be careful not to double-process)
+        # Italic: *text* or _text_ (avoid double-processing bold)
         line = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"_\1_", line)
 
         output.append(line)
 
+    # Close unclosed code block
     if in_code_block and code_lines:
         output.append(f"```\n{chr(10).join(code_lines)}\n```")
 
     return "\n".join(output)
 
 
-def split_message(text: str, max_len: int = MAX_TELEGRAM_LENGTH) -> list:
-    """Split a long message into chunks that fit Telegram's limit."""
+def split_message(text: str, max_len: int = MAX_TELEGRAM_LENGTH) -> list[str]:
+    """Split a long message into chunks that fit Telegram's character limit.
+
+    Preserves code block boundaries across splits.
+    """
     if len(text) <= max_len:
         return [text]
 
-    chunks = []
+    chunks: list[str] = []
     current = ""
     in_code = False
 
@@ -93,14 +113,11 @@ def split_message(text: str, max_len: int = MAX_TELEGRAM_LENGTH) -> list:
                 if in_code:
                     current += "\n```"
                 chunks.append(current)
-                current = ""
-                if in_code:
-                    current = "```\n" + line
-                else:
-                    current = line
+                current = "```\n" + line if in_code else line
             else:
+                # Single line exceeds limit — hard-split
                 for i in range(0, len(line), max_len):
-                    chunks.append(line[i:i + max_len])
+                    chunks.append(line[i : i + max_len])
         else:
             current = candidate
 
@@ -110,10 +127,11 @@ def split_message(text: str, max_len: int = MAX_TELEGRAM_LENGTH) -> list:
     return chunks or [text[:max_len]]
 
 
-def format_repo_list(repos: list) -> str:
+def format_repo_list(repos: list[dict[str, Any]]) -> str:
+    """Format a list of GitHub repository dicts for Telegram display."""
     if not repos:
         return "No repositories found."
-    lines = []
+    lines: list[str] = []
     for r in repos:
         vis = "🔒" if r.get("private") else "🌍"
         star = r.get("stargazers_count", 0)
@@ -125,11 +143,14 @@ def format_repo_list(repos: list) -> str:
     return "\n".join(lines)
 
 
-def format_stats(stats: dict) -> str:
+def format_stats(stats: dict[str, Any]) -> str:
+    """Format user statistics into a Telegram-friendly message."""
     if not stats:
         return "No stats available yet."
     first = datetime.fromtimestamp(stats.get("first_seen", 0)).strftime("%Y-%m-%d")
-    last = datetime.fromtimestamp(stats.get("last_seen", 0)).strftime("%Y-%m-%d %H:%M")
+    last = datetime.fromtimestamp(stats.get("last_seen", 0)).strftime(
+        "%Y-%m-%d %H:%M"
+    )
     name = stats.get("first_name", "") or stats.get("username", "") or "User"
     return (
         f"📊 *Stats for {name}*\n\n"
@@ -143,6 +164,7 @@ def format_stats(stats: dict) -> str:
 
 
 def format_uptime(seconds: float) -> str:
+    """Format a duration in seconds as a human-readable string."""
     h = int(seconds // 3600)
     m = int((seconds % 3600) // 60)
     s = int(seconds % 60)
@@ -154,10 +176,24 @@ def format_uptime(seconds: float) -> str:
 
 
 def detect_language(code: str) -> str:
-    patterns = {
+    """Heuristically detect the programming language of a code snippet."""
+    patterns: dict[str, list[str]] = {
         "python": [r"def ", r"import ", r"print\(", r"class ", r"elif "],
-        "javascript": [r"const ", r"let ", r"var ", r"function ", r"=>\s*{", r"console\.log"],
-        "typescript": [r": string", r": number", r": boolean", r"interface ", r"type "],
+        "javascript": [
+            r"const ",
+            r"let ",
+            r"var ",
+            r"function ",
+            r"=>\s*{",
+            r"console\.log",
+        ],
+        "typescript": [
+            r": string",
+            r": number",
+            r": boolean",
+            r"interface ",
+            r"type ",
+        ],
         "java": [r"public class", r"System\.out", r"void main"],
         "rust": [r"fn main", r"let mut", r"println!", r"use std"],
         "go": [r"func main", r"fmt\.Print", r"package main"],
@@ -167,7 +203,6 @@ def detect_language(code: str) -> str:
         "sql": [r"SELECT ", r"INSERT ", r"UPDATE ", r"CREATE TABLE"],
         "json": [r'^\s*\{', r'^\s*\[', r'":\s*["{0-9\[{]'],
     }
-    code_lower = code.lower()
     for lang, pats in patterns.items():
         matches = sum(1 for p in pats if re.search(p, code, re.IGNORECASE))
         if matches >= 2:

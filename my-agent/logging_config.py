@@ -17,6 +17,7 @@ __all__ = ["configure_logging", "get_logger"]
 
 
 def _resolve_level(level: str | int | None) -> int:
+    """Resolve a log level name/int to a numeric level."""
     if isinstance(level, int):
         return level
     if isinstance(level, str):
@@ -69,12 +70,13 @@ def configure_logging(
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
     ]
+    renderer: Any
     if log_format == "json":
-        renderer: Any = structlog.processors.JSONRenderer()
+        renderer = structlog.processors.JSONRenderer()
     else:
         renderer = structlog.dev.ConsoleRenderer(colors=sys.stdout.isatty())
     structlog.configure(
-        processors=shared_processors + [renderer],
+        processors=[*shared_processors, renderer],
         wrapper_class=structlog.make_filtering_bound_logger(log_level),
         logger_factory=structlog.PrintLoggerFactory(),
         cache_logger_on_first_use=True,

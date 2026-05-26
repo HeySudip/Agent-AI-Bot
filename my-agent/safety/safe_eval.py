@@ -130,7 +130,8 @@ def safe_eval(expression: str) -> int | float:
     return result
 
 
-def _eval_node(node: ast.AST) -> Any:
+def _eval_node(node: ast.AST) -> int | float:
+    """Recursively evaluate an AST node against the allow-list."""
     if isinstance(node, ast.Constant):
         if isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
             return node.value
