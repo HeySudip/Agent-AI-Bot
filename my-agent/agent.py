@@ -239,7 +239,19 @@ def _invoke_with_retry(user_message: str, chat_history: list) -> str:
                     )
                     agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
                     result = agent.invoke({"messages": messages})
-                    return _extract_text(result["messages"][-1].content)
+                    final_text = _extract_text(result["messages"][-1].content)
+                    # Extract __FILE_PATH__ from ANY message in the chain (tool results)
+                    file_path_tag = None
+                    for msg in result["messages"]:
+                        raw = _extract_text(msg.content) if hasattr(msg, "content") else ""
+                        m = re.search(r"__FILE_PATH__=([^\s]+)", raw)
+                        if m:
+                            file_path_tag = m.group(0)
+                            break
+                    if file_path_tag and "__FILE_PATH__" not in final_text:
+                        logger.info(f"Appending file tag from tool message: {file_path_tag}")
+                        final_text = final_text + " " + file_path_tag
+                    return final_text
                 except Exception as e:
                     error_str = str(e)
                     last_error_gemini = error_str
