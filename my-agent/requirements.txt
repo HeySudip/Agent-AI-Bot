@@ -23,6 +23,16 @@ lxml
 PyGithub
 youtube-transcript-api
 fpdf2
+
+# PDF rendering (used by tools/pdf_builder.py)
+reportlab>=4.0
+
+# Video pipeline (used by tools/video.py)
+yt-dlp
+imageio-ffmpeg
+Pillow
+
+# HuggingFace integrations
 huggingface_hub
 
 # Observability (optional but strongly recommended)

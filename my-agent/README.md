@@ -11,6 +11,10 @@ per-user memory in SQLite.
   limit / overload / 5xx).
 - **Web search**: DuckDuckGo (free, always on) + Tavily (optional, higher
   quality).
+- **Video → PDF tool** with five modes — `summary`, `qa`, `screenshots`,
+  `subtitles`, `full` — that pulls multilingual transcripts, extracts
+  evenly-spaced frames via yt-dlp + ffmpeg, and renders a clean PDF with
+  metadata, summary, embedded screenshots, and the full transcript.
 - **GitHub tools** (26): create / fork / delete repos, manage issues, PRs,
   branches, files, gists, commits.
 - **URL summarizer** with **SSRF protection** — refuses loopback, private,
@@ -72,7 +76,14 @@ my-agent/
 ├── exceptions.py       # structured exception hierarchy
 ├── logging_config.py   # structlog + secret redaction processor
 ├── handlers/           # Telegram command + message handlers
-├── tools/              # LangChain tools: github, search, url, utilities, pdf
+├── tools/              # LangChain tools
+│   ├── pdf_builder.py  # shared, structured PDF renderer
+│   ├── video.py        # YouTube → PDF with summary/QA/screenshots/subtitles
+│   ├── youtube_pdf.py  # research_and_create_pdf, generate_text_to_pdf
+│   ├── github.py
+│   ├── search.py
+│   ├── url.py
+│   └── utilities.py
 ├── memory/             # SQLite conversation + user stats store
 ├── safety/             # safe_eval, ssrf_guard, secrets_redactor
 ├── utils/              # rate limiter, async helpers, formatting
@@ -127,6 +138,30 @@ descriptions.
 - **Tightened key auto-detection**. Provider-prefix patterns only — the
   previous catch-all `[A-Za-z0-9+/=]{80,100}` pattern that matched arbitrary
   base64 has been removed.
+
+## Video tool
+
+The `video_to_pdf` tool turns a YouTube URL (or a free-text search query)
+into a clean PDF. Pick a mode:
+
+| mode          | what's in the PDF                                                  |
+|---------------|--------------------------------------------------------------------|
+| `summary`     | Overview, key points, quotes, takeaways (LLM-generated)            |
+| `qa`          | Answers to questions you pass in `questions=...` (LLM, transcript) |
+| `screenshots` | N evenly-spaced frames extracted via yt-dlp + ffmpeg               |
+| `subtitles`   | Just the multilingual transcript (with translation fallback)       |
+| `full`        | Metadata + summary + screenshots + transcript (default)            |
+
+Frame extraction uses `yt-dlp` to download the lowest-quality video and
+`imageio-ffmpeg`'s vendored ffmpeg binary to grab frames — no system
+packages required. If either is missing, the tool falls back to the
+high-resolution YouTube thumbnail and records the degradation in the
+PDF's "Processing notes" section.
+
+Transcript fetching tries, in order: a manual transcript in a preferred
+language, an auto-generated transcript in a preferred language, anything
+in any language (translated to English when possible). Any failure is
+surfaced explicitly rather than silently producing a blank PDF.
 
 ## Testing
 

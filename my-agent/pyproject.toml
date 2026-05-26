@@ -40,6 +40,10 @@ dependencies = [
     "tavily-python",
     "youtube-transcript-api",
     "fpdf2",
+    "reportlab>=4.0",
+    "yt-dlp",
+    "imageio-ffmpeg",
+    "Pillow",
     "huggingface_hub",
 ]
 
