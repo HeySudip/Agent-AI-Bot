@@ -42,8 +42,26 @@ GROQ_MODELS = [
 
 
 def _get_gemini_keys() -> list[str]:
-    """Collect non-empty Gemini keys from environment."""
-    return [k for var in _GEMINI_KEY_VARS if (k := os.getenv(var, "").strip())]
+    """Collect non-empty Gemini keys from environment and config.json."""
+    # First try env vars
+    keys = [k for var in _GEMINI_KEY_VARS if (k := os.getenv(var, "").strip())]
+    
+    # Fallback: also check config.json (the bot's runtime config store)
+    if not keys:
+        try:
+            from config import load_config
+            cfg = load_config()
+            # Single key
+            if single := cfg.get("gemini_api_key", "").strip():
+                keys.append(single)
+            # Additional keys array
+            for extra in cfg.get("gemini_api_keys", []):
+                if extra.strip() and extra.strip() not in keys:
+                    keys.append(extra.strip())
+        except Exception:
+            pass
+    
+    return keys
 
 
 def _is_retryable(e: Exception) -> bool:
@@ -121,6 +139,13 @@ async def _call_groq(
 ) -> str:
     """Try Groq models in order. Raises on total failure."""
     api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not api_key:
+        # Fallback: check config.json
+        try:
+            from config import load_config
+            api_key = load_config().get("groq_api_key", "").strip()
+        except Exception:
+            pass
     if not api_key:
         raise LLMServiceError("No GROQ_API_KEY configured")
 
