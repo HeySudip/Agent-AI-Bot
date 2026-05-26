@@ -74,7 +74,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             stats.increment("github_actions")
 
         # Check for file path
-        file_path_match = re.search(r"__FILE_PATH__=([\w\./-]+)", reply)
+        file_path_match = re.search(r"__FILE_PATH__=([^\s]+)", reply)
         filepath = None
         if file_path_match:
             filepath = file_path_match.group(1)
@@ -94,6 +94,10 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                     await update.message.reply_text(chunk)
         
         # Send document if agent generated one
+        if filepath:
+            logger.info(f"Agent returned file path: {filepath}")
+            if not os.path.exists(filepath):
+                logger.error(f"File not found on disk: {filepath}")
         if filepath and os.path.exists(filepath):
             with open(filepath, "rb") as f:
                 await update.message.reply_document(document=f)
@@ -177,7 +181,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             None, ask_agent, user_message, history, stats
         )
 
-        file_path_match = re.search(r"__FILE_PATH__=([\w\./-]+)", reply)
+        file_path_match = re.search(r"__FILE_PATH__=([^\s]+)", reply)
         filepath = None
         if file_path_match:
             filepath = file_path_match.group(1)

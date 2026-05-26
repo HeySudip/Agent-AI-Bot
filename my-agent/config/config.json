@@ -1,0 +1,15 @@
+{
+  "gemini_api_key": "AIzaSyBfK2qwfqDIBCTpdEV2mxaVTm5_q5YV4-c",
+  "anthropic_api_key": "",
+  "github_token": "",
+  "tavily_api_key": "",
+  "admin_user_ids": [],
+  "allowed_user_ids": [],
+  "public_access": true,
+  "max_history_length": 30,
+  "default_language": "en",
+  "response_style": "balanced",
+  "gemini_api_keys": [
+    "AIzaSyBfK2qwfqDIBCTpdEV2mxaVTm5_q5YV4-c"
+  ]
+}
