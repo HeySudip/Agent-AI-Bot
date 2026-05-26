@@ -128,9 +128,8 @@ def detect_and_save_credentials(text: str) -> list:
                     keys.append(old)
                 if m.group(0) not in keys:
                     keys.append(m.group(0))
-                cfg["gemini_api_keys"] = keys
-                cfg["gemini_api_key"] = m.group(0)
-                save_config(cfg)
+                set_key("gemini_api_keys", keys)
+                set_key("gemini_api_key", m.group(0))
             else:
                 set_key(field, m.group(0))
             found.append(field)
