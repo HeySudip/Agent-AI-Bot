@@ -18,3 +18,5 @@ langchain-groq
 langchain-openai
 
 huggingface_hub
+
+langchain-huggingface

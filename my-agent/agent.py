@@ -283,8 +283,7 @@ def get_llm(preferred_model: str = ""):
     hf_key = config.get("huggingface_api_key", "")
     if hf_key:
         try:
-            from langchain_community.llms import HuggingFaceEndpoint
-            from langchain_community.chat_models.huggingface import ChatHuggingFace
+            from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
             
             hf_llm = HuggingFaceEndpoint(
                 repo_id="mistralai/Mixtral-8x7B-Instruct-v0.1",
@@ -434,8 +433,7 @@ def _invoke_with_retry(user_message: str, chat_history: list) -> str:
     hf_key = config.get("huggingface_api_key", "")
     if hf_key:
         try:
-            from langchain_community.llms import HuggingFaceEndpoint
-            from langchain_community.chat_models.huggingface import ChatHuggingFace
+            from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
             
             hf_llm = HuggingFaceEndpoint(
                 repo_id="mistralai/Mixtral-8x7B-Instruct-v0.1",
