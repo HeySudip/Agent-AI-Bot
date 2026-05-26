@@ -17,34 +17,76 @@ def _safe_filename(name: str, ext=".pdf") -> str:
 
 
 def _ddg_search(query: str, max_results=8) -> list:
-    """DuckDuckGo text search — returns list of {title, url, body}."""
+    """DuckDuckGo/ddgs text search — returns list of {title, url, body}."""
+    # Try ddgs first (new package name), fallback to duckduckgo_search
+    for pkg in ["ddgs", "duckduckgo_search"]:
+        try:
+            if pkg == "ddgs":
+                from ddgs import DDGS
+            else:
+                from duckduckgo_search import DDGS
+            with DDGS() as d:
+                results = list(d.text(query, max_results=max_results))
+            if results:
+                return results
+        except Exception as e:
+            logger.debug(f"Search via {pkg} failed: {e}")
+    # Last resort: requests-based Bing scrape
     try:
-        from duckduckgo_search import DDGS
-        with DDGS() as ddgs:
-            return list(ddgs.text(query, max_results=max_results))
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; ResearchBot/1.0)"}
+        url = f"https://www.bing.com/search?q={urllib.parse.quote(query)}&count={max_results}"
+        r = requests.get(url, headers=headers, timeout=10)
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(r.text, "lxml")
+        results = []
+        for li in soup.select("li.b_algo")[:max_results]:
+            a = li.select_one("h2 a")
+            snippet = li.select_one(".b_caption p")
+            if a:
+                results.append({
+                    "title": a.get_text(strip=True),
+                    "href": a.get("href", ""),
+                    "body": snippet.get_text(strip=True) if snippet else "",
+                })
+        return results
     except Exception as e:
-        logger.warning(f"DDG search failed: {e}")
-        return []
+        logger.warning(f"Bing fallback search failed: {e}")
+    return []
 
 
 def _scrape_url(url: str, timeout=10) -> str:
-    """Scrape visible text from a URL."""
-    try:
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; ResearchBot/1.0)"}
-        r = requests.get(url, headers=headers, timeout=timeout)
-        r.raise_for_status()
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(r.text, "lxml")
-        # Remove scripts, styles, nav
-        for tag in soup(["script", "style", "nav", "footer", "header", "aside", "iframe"]):
-            tag.decompose()
-        text = soup.get_text(separator="\n", strip=True)
-        # Collapse blank lines
-        lines = [l.strip() for l in text.splitlines() if l.strip()]
-        return "\n".join(lines)[:8000]
-    except Exception as e:
-        logger.warning(f"Scrape failed for {url}: {e}")
-        return ""
+    """Scrape visible text from a URL with multiple user-agent fallbacks."""
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+        "Googlebot/2.1 (+http://www.google.com/bot.html)",
+    ]
+    for ua in user_agents:
+        try:
+            headers = {
+                "User-Agent": ua,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Accept-Encoding": "gzip, deflate",
+                "Connection": "keep-alive",
+            }
+            r = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
+            if r.status_code == 403:
+                continue
+            r.raise_for_status()
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(r.text, "lxml")
+            for tag in soup(["script", "style", "nav", "footer", "header", "aside", "iframe", "noscript"]):
+                tag.decompose()
+            text = soup.get_text(separator="\n", strip=True)
+            lines = [l.strip() for l in text.splitlines() if len(l.strip()) > 20]
+            result = "\n".join(lines)[:8000]
+            if len(result) > 200:
+                return result
+        except Exception as e:
+            logger.debug(f"Scrape attempt failed for {url} with UA {ua[:30]}: {e}")
+    logger.warning(f"All scrape attempts failed for {url}")
+    return ""
 
 
 def _extract_yt_id(url: str):
@@ -249,8 +291,26 @@ def research_and_create_pdf(query: str) -> str:
         if len(results_collected) >= 5:
             break
 
+    # Even if full scrape failed, use snippets from search results
     if not results_collected:
-        return "Found links but couldn't extract content. The sites may be blocking scraping."
+        logger.warning("All scrapes blocked, falling back to search snippets only")
+        for hit in all_results[:8]:
+            title = hit.get("title", "Source")
+            body = hit.get("body", hit.get("snippet", ""))
+            url = hit.get("href", hit.get("url", ""))
+            if body:
+                results_collected.append({
+                    "heading": title,
+                    "body": f"{body}\n\nSource: {url}",
+                })
+                sources_used.append(f"• {title}\n  {url}")
+
+    if not results_collected:
+        # Absolute last resort — generate PDF stating what was found
+        results_collected = [{
+            "heading": "Search Summary",
+            "body": f"Searched for: {query}\n\nFound {len(all_results)} results but content could not be extracted due to site restrictions.\n\nURLs found:\n" + "\n".join(h.get("href", h.get("url","")) for h in all_results[:5]),
+        }]
 
     # Add sources section at the end
     results_collected.append({
