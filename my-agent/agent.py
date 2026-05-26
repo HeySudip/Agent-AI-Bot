@@ -235,7 +235,7 @@ def _invoke_with_retry(user_message: str, chat_history: list) -> str:
                         break # Key invalid, try next key
                     if _is_skip_error(error_str):
                         if _is_rate_limit_error(error_str):
-                            break # Rate limited, try next key
+                            continue # Rate limited, try next model
                         continue # Next model
                     
         if _is_rate_limit_error(last_error_gemini):
