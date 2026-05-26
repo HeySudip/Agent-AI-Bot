@@ -224,10 +224,10 @@ def get_llm(preferred_model: str = ""):
             llm = ChatOpenAI(
                 openai_api_base="https://openrouter.ai/api/v1",
                 openai_api_key=openrouter_key,
-                model_name="google/gemini-2.0-pro-exp-02-05:free",
+                model_name="meta-llama/llama-3.3-70b-instruct:free",
                 temperature=0.7
             )
-            return llm, "openrouter", "google/gemini-2.0-pro-exp-02-05:free"
+            return llm, "openrouter", "meta-llama/llama-3.3-70b-instruct:free"
         except Exception as e:
             logger.warning(f"OpenRouter init failed: {e}")
 
@@ -253,7 +253,7 @@ def get_llm(preferred_model: str = ""):
             llm = ChatOpenAI(
                 openai_api_base="https://openrouter.ai/api/v1",
                 openai_api_key=openrouter_key,
-                model_name="google/gemini-2.0-pro-exp-02-05:free",
+                model_name="meta-llama/llama-3.3-70b-instruct:free",
                 temperature=0.7
             )
             agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
@@ -374,10 +374,10 @@ def _invoke_with_retry(user_message: str, chat_history: list) -> str:
             llm = ChatOpenAI(
                 openai_api_base="https://openrouter.ai/api/v1",
                 openai_api_key=openrouter_key,
-                model_name="google/gemini-2.0-pro-exp-02-05:free",
+                model_name="meta-llama/llama-3.3-70b-instruct:free",
                 temperature=0.7
             )
-            return llm, "openrouter", "google/gemini-2.0-pro-exp-02-05:free"
+            return llm, "openrouter", "meta-llama/llama-3.3-70b-instruct:free"
         except Exception as e:
             logger.warning(f"OpenRouter init failed: {e}")
 
@@ -403,7 +403,7 @@ def _invoke_with_retry(user_message: str, chat_history: list) -> str:
             llm = ChatOpenAI(
                 openai_api_base="https://openrouter.ai/api/v1",
                 openai_api_key=openrouter_key,
-                model_name="google/gemini-2.0-pro-exp-02-05:free",
+                model_name="meta-llama/llama-3.3-70b-instruct:free",
                 temperature=0.7
             )
             agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
