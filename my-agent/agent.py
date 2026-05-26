@@ -195,85 +195,6 @@ def _invoke_with_retry(user_message: str, chat_history: list) -> str:
     tools = build_all_tools()
     messages = chat_history + [{"role": "user", "content": user_message}]
 
-    # 1. Try Groq (Fastest, FREE, no geo blocks)
-    groq_key = config.get("groq_api_key", "")
-    if groq_key:
-        try:
-            from langchain_groq import ChatGroq
-            llm = ChatGroq(model="llama-3.3-70b-versatile", api_key=groq_key, temperature=0.7)
-            agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
-            result = agent.invoke({"messages": messages})
-            return _extract_text(result["messages"][-1].content)
-        except Exception as e:
-            logger.error(f"Groq error: {e}")
-
-    # 2. Try HuggingFace (FREE)
-    hf_key = config.get("huggingface_api_key", "")
-    if hf_key:
-        try:
-            from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
-            hf_llm = HuggingFaceEndpoint(
-                repo_id="mistralai/Mixtral-8x7B-Instruct-v0.1",
-                huggingfacehub_api_token=hf_key,
-                temperature=0.7,
-                max_new_tokens=2000
-            )
-            llm = ChatHuggingFace(llm=hf_llm)
-            agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
-            result = agent.invoke({"messages": messages})
-            return _extract_text(result["messages"][-1].content)
-        except Exception as e:
-            logger.error(f"HuggingFace error: {e}")
-
-    # 3. Try Grok (xAI)
-    grok_key = config.get("grok_api_key", "")
-    if grok_key:
-        try:
-            from langchain_openai import ChatOpenAI
-            llm = ChatOpenAI(
-                api_key=grok_key,
-                base_url="https://api.x.ai/v1",
-                model="grok-2-latest",
-                temperature=0.7
-            )
-            agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
-            result = agent.invoke({"messages": messages})
-            return _extract_text(result["messages"][-1].content)
-        except Exception as e:
-            logger.error(f"Grok error: {e}")
-
-    # 4. Try OpenRouter
-    openrouter_key = config.get("openrouter_api_key", "")
-    if openrouter_key:
-        try:
-            from langchain_openai import ChatOpenAI
-            llm = ChatOpenAI(
-                openai_api_base="https://openrouter.ai/api/v1",
-                openai_api_key=openrouter_key,
-                model_name="meta-llama/llama-3.3-70b-instruct:free",
-                temperature=0.7
-            )
-            agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
-            result = agent.invoke({"messages": messages})
-            return _extract_text(result["messages"][-1].content)
-        except Exception as e:
-            logger.error(f"OpenRouter error: {e}")
-
-    # 5. Try Anthropic
-    anthropic_key = config.get("anthropic_api_key", "")
-    if anthropic_key:
-        try:
-            from langchain_anthropic import ChatAnthropic
-            import os
-            os.environ["ANTHROPIC_API_KEY"] = anthropic_key
-            llm = ChatAnthropic(model="claude-sonnet-4-5", api_key=anthropic_key)
-            agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
-            result = agent.invoke({"messages": messages})
-            return _extract_text(result["messages"][-1].content)
-        except Exception as e:
-            logger.error(f"Anthropic error: {e}")
-
-    # 6. Try Gemini (Last, because of rate limits)
     gemini_keys = config.get("gemini_api_keys", [])
     if config.get("gemini_api_key") and config.get("gemini_api_key") not in gemini_keys:
         gemini_keys.insert(0, config.get("gemini_api_key"))
@@ -298,10 +219,10 @@ def _invoke_with_retry(user_message: str, chat_history: list) -> str:
                     error_str = str(e)
                     last_error_gemini = error_str
                     if _is_auth_error(error_str):
-                        break # Key invalid, next key
+                        break # Key invalid, try next key
                     if _is_skip_error(error_str):
                         if _is_rate_limit_error(error_str):
-                            break # Rate limited, next key
+                            break # Rate limited, try next key
                         continue # Next model
                     
         if _is_rate_limit_error(last_error_gemini):
