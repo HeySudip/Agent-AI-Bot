@@ -5,6 +5,7 @@ import urllib.parse
 import urllib.request
 import logging
 import requests
+import json
 from langchain.tools import tool
 
 logger = logging.getLogger(__name__)
@@ -18,7 +19,6 @@ def _safe_filename(name: str, ext=".pdf") -> str:
 
 def _ddg_search(query: str, max_results=8) -> list:
     """DuckDuckGo/ddgs text search — returns list of {title, url, body}."""
-    # Try ddgs first (new package name), fallback to duckduckgo_search
     for pkg in ["ddgs", "duckduckgo_search"]:
         try:
             if pkg == "ddgs":
@@ -31,9 +31,9 @@ def _ddg_search(query: str, max_results=8) -> list:
                 return results
         except Exception as e:
             logger.debug(f"Search via {pkg} failed: {e}")
-    # Last resort: requests-based Bing scrape
+    # Last resort: Bing scrape
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; ResearchBot/1.0)"}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
         url = f"https://www.bing.com/search?q={urllib.parse.quote(query)}&count={max_results}"
         r = requests.get(url, headers=headers, timeout=10)
         from bs4 import BeautifulSoup
@@ -89,6 +89,107 @@ def _scrape_url(url: str, timeout=10) -> str:
     return ""
 
 
+def _try_download_pdf(url: str, save_path: str, timeout=15) -> bool:
+    """Try to download a PDF file directly from a URL."""
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Googlebot/2.1 (+http://www.google.com/bot.html)",
+    ]
+    for ua in user_agents:
+        try:
+            headers = {"User-Agent": ua}
+            r = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True, stream=True)
+            if r.status_code == 200:
+                content_type = r.headers.get("Content-Type", "")
+                if "pdf" in content_type.lower() or url.lower().endswith(".pdf"):
+                    with open(save_path, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                    size = os.path.getsize(save_path)
+                    if size > 1000:  # At least 1KB
+                        logger.info(f"Downloaded PDF: {save_path} ({size} bytes)")
+                        return True
+                    else:
+                        os.remove(save_path)
+        except Exception as e:
+            logger.debug(f"PDF download failed for {url}: {e}")
+    return False
+
+
+def _is_answer_key_request(query: str) -> bool:
+    """Detect if the user is asking for an answer key / question paper / specific exam document."""
+    keywords = [
+        "answer key", "answer sheet", "question paper", "question bank",
+        "solved paper", "solution pdf", "solutions pdf", "answer pdf",
+        "key pdf", "omr sheet", "response sheet", "official key",
+        "provisional key", "final key", "shift 1", "shift 2",
+        "set a", "set b", "set c", "set d", "paper 1", "paper 2",
+    ]
+    lower = query.lower()
+    return any(kw in lower for kw in keywords)
+
+
+def _is_exam_query(query: str) -> bool:
+    """Check if query is about an exam."""
+    exams = [
+        "wbjee", "jee", "neet", "upsc", "ssc", "gate", "cat", "clat",
+        "cuet", "bitsat", "viteee", "comedk", "mht-cet", "mhtcet",
+        "kcet", "ap eamcet", "ts eamcet", "keam", "cmat", "xat",
+        "snap", "mat", "ielts", "toefl", "gre", "gmat", "ugc net",
+        "csir net", "cbse", "icse", "isc", "board exam",
+    ]
+    lower = query.lower()
+    return any(exam in lower for exam in exams)
+
+
+def _gemini_compile_answer_key(raw_content: str, query: str) -> str:
+    """Use Gemini to extract and structure answer key data from raw scraped content."""
+    try:
+        from config import load_config
+        config = load_config()
+        api_key = config.get("gemini_api_key", "")
+        if not api_key:
+            return ""
+
+        prompt = f"""You are an expert at extracting answer key data from web content.
+
+The user searched for: "{query}"
+
+Below is raw content scraped from various websites. Extract the ACTUAL answer key data if present.
+
+Format the output as:
+- Subject-wise sections
+- Question Number → Answer (A/B/C/D or the actual answer)
+- If exact answers aren't in the content, extract any useful information like:
+  - Expected cutoff marks
+  - Paper analysis (difficulty level, topic-wise breakdown)
+  - Important dates (when official key releases)
+  - Direct download links for answer key PDFs
+
+If the content is ONLY generic articles about the exam with NO actual answer data, question-answer mappings, cutoff info, or paper analysis, respond with exactly: NO_USEFUL_DATA
+
+Raw content:
+{raw_content[:12000]}"""
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 4000}
+        }
+        r = requests.post(url, json=payload, timeout=30)
+        if r.status_code == 200:
+            data = r.json()
+            text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+            if text and "NO_USEFUL_DATA" not in text:
+                return text
+            logger.info("Gemini determined: no useful answer key data in scraped content")
+        else:
+            logger.warning(f"Gemini API error: {r.status_code} {r.text[:200]}")
+    except Exception as e:
+        logger.warning(f"Gemini compile failed: {e}")
+    return ""
+
+
 def _extract_yt_id(url: str):
     parsed = urllib.parse.urlparse(url)
     if parsed.hostname in ("youtu.be", "www.youtu.be"):
@@ -112,7 +213,6 @@ def _get_yt_transcript(video_id: str) -> str:
 
 
 def _get_yt_metadata(video_id: str) -> dict:
-    """Get title/description via yt-dlp (no download)."""
     try:
         import yt_dlp
         opts = {"quiet": True, "skip_download": True, "no_warnings": True}
@@ -134,10 +234,6 @@ def _get_yt_metadata(video_id: str) -> dict:
 # ─── PDF builder ──────────────────────────────────────────────────────────────
 
 def _build_pdf(title: str, sections: list, pdf_path: str):
-    """
-    Build a nicely formatted PDF using reportlab.
-    sections = list of {"heading": str, "body": str}
-    """
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import cm
@@ -192,10 +288,9 @@ def _build_pdf(title: str, sections: list, pdf_path: str):
 
     story = []
 
-    # Title
     safe_title = title.encode("utf-8", "replace").decode("utf-8")
     story.append(Paragraph(safe_title, title_style))
-    story.append(Paragraph(f"Generated by Agent AI Bot • {time.strftime('%d %B %Y')}", meta_style))
+    story.append(Paragraph(f"Generated by Agent AI Bot &bull; {time.strftime('%d %B %Y')}", meta_style))
     story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#cccccc")))
     story.append(Spacer(1, 12))
 
@@ -206,14 +301,14 @@ def _build_pdf(title: str, sections: list, pdf_path: str):
             continue
 
         if heading:
-            story.append(Paragraph(heading.encode("utf-8", "replace").decode("utf-8"), heading_style))
+            safe_h = heading.encode("utf-8", "replace").decode("utf-8")
+            safe_h = safe_h.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            story.append(Paragraph(safe_h, heading_style))
 
-        # Split into paragraphs and render each
         for para in body.split("\n\n"):
             para = para.strip()
             if not para:
                 continue
-            # Escape XML special chars for reportlab
             para = para.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             story.append(Paragraph(para.encode("utf-8", "replace").decode("utf-8"), body_style))
             story.append(Spacer(1, 4))
@@ -236,96 +331,175 @@ def research_and_create_pdf(query: str) -> str:
     - Research reports, notes, summaries from the web
     - Any factual content gathered from multiple web sources
 
-    This tool searches everywhere — news sites, official boards, educational portals —
-    not just one source. It always tries hard to find real content.
+    This tool searches everywhere — news sites, official boards, educational portals.
+    For answer key requests, it tries to find and download actual answer key PDFs,
+    extract real Q→Answer data, and uses AI to compile structured results.
 
     Returns a file path in the format: __FILE_PATH__=/tmp/....pdf
+    OR a text message if no useful data was found.
     """
-    results_collected = []
-    sources_used = []
+    is_answer_key = _is_answer_key_request(query)
+    is_exam = _is_exam_query(query)
 
-    # Multiple targeted search queries for better coverage
-    queries = [
-        query,
-        f"{query} 2026",
-        f"{query} official answer key",
-        f"{query} site result",
-    ]
+    # ── Step 1: Search with multiple targeted queries ──
+    search_queries = [query]
+    if is_answer_key:
+        search_queries.extend([
+            f"{query} official pdf download",
+            f"{query} with solutions",
+            f"{query} set wise answers",
+        ])
+    elif is_exam:
+        search_queries.append(f"{query} 2026 official")
+    else:
+        search_queries.append(f"{query} detailed")
 
     seen_urls = set()
     all_results = []
-    for q in queries[:3]:
-        hits = _ddg_search(q, max_results=6)
+    for q in search_queries[:4]:
+        hits = _ddg_search(q, max_results=8)
         for h in hits:
             url = h.get("href", h.get("url", ""))
             if url and url not in seen_urls:
                 seen_urls.add(url)
                 all_results.append(h)
-        if len(all_results) >= 10:
+        if len(all_results) >= 15:
             break
 
     if not all_results:
-        return "Could not find any web results for this query. Try rephrasing."
+        return "I couldn't find any results for this query. Try rephrasing or being more specific."
 
-    # Scrape top results for real content
-    for hit in all_results[:6]:
+    # ── Step 2: Try to find and download actual PDF files ──
+    if is_answer_key or is_exam:
+        pdf_urls = []
+        for hit in all_results:
+            url = hit.get("href", hit.get("url", ""))
+            title = hit.get("title", "").lower()
+            body = hit.get("body", "").lower()
+            # Look for direct PDF links
+            if url.lower().endswith(".pdf"):
+                pdf_urls.append(url)
+            # Look for links that suggest PDF downloads
+            if any(kw in title + body for kw in ["download pdf", "answer key pdf", "download answer key", "official answer key"]):
+                pdf_urls.append(url)
+
+        # Try downloading actual PDFs
+        for pdf_url in pdf_urls[:3]:
+            if pdf_url.lower().endswith(".pdf"):
+                save_path = _safe_filename(query)
+                if _try_download_pdf(pdf_url, save_path):
+                    return f"Found and downloaded the official PDF. __FILE_PATH__={save_path}"
+
+    # ── Step 3: Scrape content from top results ──
+    raw_contents = []
+    sources_used = []
+
+    for hit in all_results[:8]:
         url = hit.get("href", hit.get("url", ""))
         title = hit.get("title", "Source")
         snippet = hit.get("body", "")
 
-        # Always include the snippet
         content = snippet
-        # Try to scrape for more depth (skip heavy PDFs, images)
         if url and not any(url.lower().endswith(x) for x in [".pdf", ".png", ".jpg", ".jpeg", ".gif"]):
             scraped = _scrape_url(url, timeout=8)
             if len(scraped) > len(content):
                 content = scraped
 
-        if content:
-            results_collected.append({
-                "heading": title,
-                "body": content[:3000],
-            })
+        if content and len(content) > 50:
+            raw_contents.append(f"=== SOURCE: {title} ({url}) ===\n{content[:4000]}")
             sources_used.append(f"• {title}\n  {url}")
 
-        if len(results_collected) >= 5:
+        if len(raw_contents) >= 5:
             break
 
-    # Even if full scrape failed, use snippets from search results
-    if not results_collected:
-        logger.warning("All scrapes blocked, falling back to search snippets only")
+    # ── Step 4: For answer key requests, use Gemini to extract structured data ──
+    if is_answer_key and raw_contents:
+        combined_raw = "\n\n".join(raw_contents)
+        compiled = _gemini_compile_answer_key(combined_raw, query)
+
+        if compiled:
+            # Gemini found useful data — build PDF
+            sections = [
+                {"heading": query.title(), "body": compiled},
+                {"heading": "Sources", "body": "\n\n".join(sources_used)},
+            ]
+            pdf_path = _safe_filename(query)
+            _build_pdf(title=query.title(), sections=sections, pdf_path=pdf_path)
+            return f"Answer key compiled from {len(sources_used)} sources. __FILE_PATH__={pdf_path}"
+        else:
+            # Gemini says no useful answer key data found
+            logger.info(f"No actual answer key data found for: {query}")
+            # Collect useful links to mention
+            links_text = "\n".join(f"• {h.get('title','')}: {h.get('href', h.get('url',''))}" for h in all_results[:5])
+            return (
+                f"I searched multiple sources but couldn't find the actual answer key data for \"{query}\". "
+                f"The official answer key may not have been released yet, or it's only available on the official website in a format I can't access.\n\n"
+                f"Here are some links that might help:\n{links_text}\n\n"
+                f"Try checking the official exam board website directly."
+            )
+
+    # ── Step 5: For general research, build PDF from scraped content ──
+    if not raw_contents:
+        # Use snippets as fallback for non-answer-key requests
         for hit in all_results[:8]:
             title = hit.get("title", "Source")
             body = hit.get("body", hit.get("snippet", ""))
             url = hit.get("href", hit.get("url", ""))
             if body:
-                results_collected.append({
-                    "heading": title,
-                    "body": f"{body}\n\nSource: {url}",
-                })
+                raw_contents.append(f"=== SOURCE: {title} ({url}) ===\n{body}")
                 sources_used.append(f"• {title}\n  {url}")
 
-    if not results_collected:
-        # Absolute last resort — generate PDF stating what was found
-        results_collected = [{
-            "heading": "Search Summary",
-            "body": f"Searched for: {query}\n\nFound {len(all_results)} results but content could not be extracted due to site restrictions.\n\nURLs found:\n" + "\n".join(h.get("href", h.get("url","")) for h in all_results[:5]),
-        }]
+    if not raw_contents:
+        return "I searched but couldn't find useful content for this query. Try being more specific."
 
-    # Add sources section at the end
-    results_collected.append({
-        "heading": "Sources",
-        "body": "\n\n".join(sources_used),
-    })
+    # For general research PDFs — use Gemini to create a well-structured summary
+    combined_raw = "\n\n".join(raw_contents)
+    try:
+        from config import load_config
+        config = load_config()
+        api_key = config.get("gemini_api_key", "")
+        if api_key:
+            prompt = f"""Create a well-organized research summary about: "{query}"
+
+Based on the following scraped web content, create a comprehensive and well-structured document.
+Use clear headings, bullet points, and organized sections.
+Only include factual information found in the sources. Do not make up data.
+
+Raw content:
+{combined_raw[:12000]}"""
+
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.2, "maxOutputTokens": 4000}
+            }
+            r = requests.post(url, json=payload, timeout=30)
+            if r.status_code == 200:
+                data = r.json()
+                summary = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                if summary and len(summary) > 100:
+                    sections = [
+                        {"heading": "", "body": summary},
+                        {"heading": "Sources", "body": "\n\n".join(sources_used)},
+                    ]
+                    pdf_path = _safe_filename(query)
+                    _build_pdf(title=query.title(), sections=sections, pdf_path=pdf_path)
+                    return f"Research compiled from {len(sources_used)} sources into a PDF. __FILE_PATH__={pdf_path}"
+    except Exception as e:
+        logger.warning(f"Gemini summary failed: {e}")
+
+    # Fallback: raw content PDF
+    sections = []
+    for raw in raw_contents:
+        lines = raw.split("\n", 1)
+        heading = lines[0].replace("=== SOURCE: ", "").replace(" ===", "") if lines else "Source"
+        body = lines[1] if len(lines) > 1 else raw
+        sections.append({"heading": heading, "body": body[:3000]})
+    sections.append({"heading": "Sources", "body": "\n\n".join(sources_used)})
 
     pdf_path = _safe_filename(query)
-    _build_pdf(
-        title=query,
-        sections=results_collected,
-        pdf_path=pdf_path,
-    )
-
-    return f"Research complete. Compiled content from {len(sources_used)} sources into a PDF. __FILE_PATH__={pdf_path}"
+    _build_pdf(title=query.title(), sections=sections, pdf_path=pdf_path)
+    return f"Research compiled from {len(sources_used)} sources into a PDF. __FILE_PATH__={pdf_path}"
 
 
 @tool
@@ -346,11 +520,9 @@ def youtube_video_to_pdf(url_or_query: str) -> str:
     video_url = url_or_query
     meta = {}
 
-    # Check if it's a URL
     if "youtube.com" in url_or_query or "youtu.be" in url_or_query:
         video_id = _extract_yt_id(url_or_query)
     else:
-        # Search for the video
         hits = _ddg_search(f"site:youtube.com {url_or_query}", max_results=5)
         for hit in hits:
             url = hit.get("href", "")
@@ -363,7 +535,6 @@ def youtube_video_to_pdf(url_or_query: str) -> str:
     if not video_id:
         return f"Could not find a YouTube video for: {url_or_query}"
 
-    # Get metadata and transcript in parallel-ish
     meta = _get_yt_metadata(video_id)
     transcript = _get_yt_transcript(video_id)
 
@@ -371,7 +542,6 @@ def youtube_video_to_pdf(url_or_query: str) -> str:
 
     sections = []
 
-    # Video info section
     info_lines = []
     if meta.get("channel"):
         info_lines.append(f"Channel: {meta['channel']}")
@@ -391,7 +561,6 @@ def youtube_video_to_pdf(url_or_query: str) -> str:
         sections.append({"heading": "Description", "body": meta["description"]})
 
     if transcript:
-        # Break transcript into readable chunks (~800 chars each)
         chunks = []
         words = transcript.split()
         chunk = []
