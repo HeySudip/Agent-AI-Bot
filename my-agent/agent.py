@@ -159,7 +159,6 @@ def _is_auth_error(error_str: str) -> bool:
 def _extract_text(content) -> str:
     """Normalize LangChain content — may be a str or a list of content blocks."""
     if isinstance(content, str):
-        # Gemini latest sometimes returns a stringified list of dicts like "[{'type': 'text', 'text': '...'}]"
         if content.strip().startswith("[{") and "'text':" in content:
             try:
                 import ast
@@ -168,7 +167,8 @@ def _extract_text(content) -> str:
                 for p in parsed:
                     if isinstance(p, dict) and "text" in p:
                         parts.append(p["text"])
-                return "\n".join(parts)
+                return "
+".join(parts)
             except Exception:
                 pass
         return content
@@ -178,10 +178,12 @@ def _extract_text(content) -> str:
             if isinstance(block, str):
                 parts.append(block)
             elif isinstance(block, dict):
-                parts.append(block.get("text", ""))
+                if "text" in block:
+                    parts.append(block["text"])
             elif hasattr(block, "text"):
                 parts.append(block.text)
-        return "\n".join(p for p in parts if p).strip()
+        return "
+".join(p for p in parts if p).strip()
     return str(content)
 
 
