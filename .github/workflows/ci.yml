@@ -36,7 +36,7 @@ jobs:
 
       - name: Lint changed safety / utility modules
         run: |
-          python -m ruff check safety exceptions.py logging_config.py settings.py utils/async_utils.py tools/video.py tools/pdf_builder.py tools/youtube_pdf.py tools/__init__.py tests
+          python -m ruff check safety exceptions.py logging_config.py settings.py utils/async_utils.py utils/response_sanitizer.py tools/video.py tools/pdf_builder.py tools/youtube_pdf.py tools/__init__.py tests
 
       - name: Run unit tests
         run: |

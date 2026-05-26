@@ -1,9 +1,9 @@
-import os
-import re
-import time
 import logging
+import re
+
 from config import load_config, set_key
 from tools import build_all_tools
+from utils.response_sanitizer import sanitize_response
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +96,14 @@ When user pastes code:
 - Encode/decode requests → encode_decode tool
 - "generate a password/uuid/color" → generate_text tool
 
+━━━ OUTPUT FORMAT — STRICT ━━━
+- Respond with the FINAL ANSWER ONLY. No "Step 1:", "Step 2:", "Reasoning:", "Plan:", "Thought:", "Final answer:", or any other meta-commentary.
+- Do NOT narrate what you are about to do. Just do it (call the tool) and then reply.
+- Do NOT write tool calls as text. Never type something like `research_and_create_pdf(query="...")` in your reply. Either invoke the tool through the function-calling interface, or don't mention it.
+- Headings like "## Understand the Request", "## Determine the Appropriate Action", "## Provide a Relevant Response", "## Offer Assistance" are FORBIDDEN — they are your private planning notes, not user-facing.
+- If you decide a tool is not the right fit, just answer the user directly and naturally. Do not say "I will not call X" — just respond.
+- "Here's your PDF!" / "Your file is ready" / "I've generated the document" are STRICTLY reserved for the case where a tool returned a real __FILE_PATH__=… tag in the same turn. If you did not receive that tag, do NOT make any file-ready claim.
+
 ━━━ RULES ━━━
 - Never ask user to type specific commands
 - Never ignore pasted code, tokens, or URLs
@@ -151,7 +159,7 @@ KEY_FRIENDLY = {
 def detect_and_save_credentials(text: str) -> list:
     """Detect API keys/tokens in plain text and save them. Returns list of field names saved."""
     found = []
-    from config import load_config, save_config, set_key
+    from config import load_config
     for pattern, field in KEY_PATTERNS:
         m = re.search(pattern, text)
         if m:
@@ -246,7 +254,7 @@ def _invoke_with_retry(user_message: str, chat_history: list) -> str:
     if gemini_keys:
         from langchain_google_genai import ChatGoogleGenerativeAI
         for key in gemini_keys:
-            for i, model in enumerate(GEMINI_MODELS):
+            for _i, model in enumerate(GEMINI_MODELS):
                 try:
                     llm = ChatGoogleGenerativeAI(
                         model=model,
@@ -266,9 +274,12 @@ def _invoke_with_retry(user_message: str, chat_history: list) -> str:
                         if m:
                             file_path_tag = m.group(0)
                             break
+                    # Sanitise BEFORE appending the file-path tag so we don't
+                    # accidentally drop "Here's your PDF" once it becomes truthful.
+                    final_text = sanitize_response(final_text)
                     if file_path_tag and "__FILE_PATH__" not in final_text:
                         logger.info(f"Appending file tag from tool message: {file_path_tag}")
-                        final_text = final_text + " " + file_path_tag
+                        final_text = (final_text + " " + file_path_tag).strip()
                     return final_text
                 except Exception as e:
                     error_str = str(e)
@@ -279,7 +290,7 @@ def _invoke_with_retry(user_message: str, chat_history: list) -> str:
                         if _is_rate_limit_error(error_str):
                             continue # Rate limited, try next model
                         continue # Next model
-                    
+
         if _is_rate_limit_error(last_error_gemini):
             raise Exception("rate_limit_all")
 
@@ -288,10 +299,12 @@ def _invoke_with_retry(user_message: str, chat_history: list) -> str:
 
 # ─── Agent invocation ─────────────────────────────────────
 
-def ask_agent(user_message: str, chat_history: list = [], stats=None) -> str:
+def ask_agent(user_message: str, chat_history: list = None, stats=None) -> str:
     """Core function called by the bot handler. Returns the agent's response."""
 
     # Auto-detect and save any credentials pasted in the message
+    if chat_history is None:
+        chat_history = []
     found_keys = detect_and_save_credentials(user_message)
 
     # Quick confirmation for pure key pastes (message is just a key)
